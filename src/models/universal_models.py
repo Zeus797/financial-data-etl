@@ -13,7 +13,7 @@ import calendar
 Base = declarative_base()
 
 # ==========================================
-#SHARED DIMENSION TABLES (Used by ALL asset classes)
+#SHARED DIMENSION TABLES (Used by ALL asset classes) 
 # ==========================================
 
 class DimCurrency(Base):
@@ -263,7 +263,7 @@ class DimFinancialInstrument(Base):
         return f"<DimFinancialInstrument(id={self.instrument_id}, code='{self.instrument_code}', type='{self.instrument_type}')>"
 
 class FactCryptocurrencyPrice(Base):
-    """Cryptocurrency prices fact table - enhanced with shared dimensions"""
+    """Cryptocurrency prices fact table - optimized for all crypto data types"""
     __tablename__ = 'fact_cryptocurrency_prices'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -271,52 +271,92 @@ class FactCryptocurrencyPrice(Base):
     date_key = Column(Integer, ForeignKey('dim_dates.date_key'), nullable=False)
     record_date = Column(Date, nullable=False)
     
-    # Price data
+    # Core price data - handles Bitcoin prices up to $99,999,999
     price = Column(DECIMAL(20, 8))
-    market_cap = Column(DECIMAL(20, 2))
-    total_volume = Column(DECIMAL(20, 2))
-    circulating_supply = Column(DECIMAL(20, 2))
+    market_cap = Column(DECIMAL(25, 2))  # Handles trillion-dollar market caps
+    total_volume = Column(DECIMAL(25, 2))  # Large trading volumes
     
-    # Performance metrics
-    price_change_24h = Column(DECIMAL(12, 8))
+    # OHLC data for historical records
+    high = Column(DECIMAL(20, 8))
+    low = Column(DECIMAL(20, 8))
+    open = Column(DECIMAL(20, 8))
+    close = Column(DECIMAL(20, 8))
+    
+    # 24-hour price ranges
+    high_24h = Column(DECIMAL(20, 8))
+    low_24h = Column(DECIMAL(20, 8))
+    
+    # Supply metrics - handles tokens with massive supplies
+    circulating_supply = Column(DECIMAL(25, 8))
+    total_supply = Column(DECIMAL(25, 8))
+    max_supply = Column(DECIMAL(25, 8))
+    fully_diluted_valuation = Column(DECIMAL(25, 2))
+    
+    # Market position changes
+    market_cap_change_24h = Column(DECIMAL(25, 2))
+    market_cap_change_percentage_24h = Column(DECIMAL(8, 4))
+    
+    # All-time metrics - handles extreme percentage changes
+    ath = Column(DECIMAL(20, 8))  # All-time high price
+    ath_change_percentage = Column(DECIMAL(15, 8))  # Can be millions of %
+    ath_date = Column(Date)
+    atl = Column(DECIMAL(20, 8))  # All-time low price
+    atl_change_percentage = Column(DECIMAL(15, 8))  # Can be millions of %
+    atl_date = Column(Date)
+    
+    # Technical indicators - Bollinger Bands
+    bollinger_upper_20d = Column(DECIMAL(20, 8))
+    bollinger_lower_20d = Column(DECIMAL(20, 8))
+    
+    # Technical indicators - RSI
+    rsi_14 = Column(DECIMAL(6, 2))
+    
+    # Price changes
+    price_change_24h = Column(DECIMAL(20, 8))
     price_change_percentage_24h = Column(DECIMAL(8, 4))
     price_change_percentage_7d = Column(DECIMAL(8, 4))
     price_change_percentage_30d = Column(DECIMAL(8, 4))
     
-    # Stablecoin specific
+    # Returns and volatility
+    daily_return = Column(DECIMAL(8, 6))
+    volatility = Column(DECIMAL(8, 6))
+    volatility_7d = Column(DECIMAL(8, 6))
+    volatility_30d = Column(DECIMAL(8, 6))
+    
+    # Stablecoin specific fields
     deviation_from_dollar = Column(DECIMAL(12, 10))
     within_01_percent = Column(Boolean)
     within_05_percent = Column(Boolean)
     within_1_percent = Column(Boolean)
     price_band = Column(String(20))  # 'normal', 'moderate', 'high', 'critical'
     
-    # Technical indicators
+    # Moving averages and standard deviations
     rolling_avg_7d = Column(DECIMAL(20, 8))
     rolling_avg_30d = Column(DECIMAL(20, 8))
     rolling_std_7d = Column(DECIMAL(20, 8))
     rolling_std_30d = Column(DECIMAL(20, 8))
-    volatility_7d = Column(DECIMAL(8, 6))
-    volatility_30d = Column(DECIMAL(8, 6))
     
-    # Market position
+    # Market position metrics
     market_cap_rank = Column(Integer)
     market_dominance_percentage = Column(DECIMAL(6, 4))
     
-    # Metadata
+    # Metadata and audit fields
     data_source = Column(String(50), default='coingecko')
     last_updated = Column(DateTime)
     created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     
     # Relationships
     instrument = relationship("DimFinancialInstrument", back_populates="crypto_prices")
     date_dim = relationship("DimDate", back_populates="crypto_prices")
     
-    # Constraints and Indexes
+    # Constraints and Indexes for performance
     __table_args__ = (
         UniqueConstraint('instrument_id', 'record_date', name='uq_crypto_instrument_date'),
         Index('idx_crypto_date_instrument', 'record_date', 'instrument_id'),
         Index('idx_crypto_market_cap', 'record_date', 'market_cap'),
         Index('idx_crypto_stablecoin', 'instrument_id', 'deviation_from_dollar'),
+        Index('idx_crypto_price_date', 'price', 'record_date'),
     )
 
 

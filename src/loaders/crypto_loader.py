@@ -1,706 +1,618 @@
-# src/loaders/crypto_loader.py
 """
-Cryptocurrency database loader - Pure database operations
-Separation of concerns: Only responsible for loading data into database
-"""
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc
-from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime, date, timedelta
-import logging
+src/loaders/crypto_loader.py
 
-# Import models and database utilities
-from src.models.base import get_session, Base, engine
+ENHANCED FINAL cryptocurrency data loader 
+- Better date handling for historical data
+- Improved error handling for missing dates
+- Added missing methods for test compatibility
+"""
+
+import logging
+from typing import Dict, List, Any, Optional, Union
+from datetime import datetime, date, timedelta
+from decimal import Decimal
+
+from sqlalchemy import text  # Import text for raw SQL queries
+from src.models.base import get_session, db_manager
 from src.models.universal_models import (
-    DimFinancialInstrument, DimEntity, DimCurrency, DimDate,
-    FactCryptocurrencyPrice, get_date_key, create_date_dimension_record
+    DimFinancialInstrument, DimDate, FactCryptocurrencyPrice,
+    get_date_key, create_date_dimension_record
 )
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 class CryptoLoader:
-    """
-    Pure cryptocurrency database loader
-    
-    Responsibilities:
-    - Load transformed data into universal database schema
-    - Handle upsert operations (insert new, update existing)
-    - Manage dimension table relationships
-    - Ensure data integrity and constraints
-    
-    NOT responsible for:
-    - Data collection or transformation
-    - Business logic or calculations
-    - Data validation (assumes data is pre-validated)
-    """
-    
-    def __init__(self, batch_size: int = 1000):
-        self.batch_size = batch_size
-        logger.info("CryptoLoader initialized with universal schema support")
-    
-    def load_market_data(self, market_data: List[Dict[str, Any]]) -> Dict[str, int]:
-        """
-        Load market data into fact table using universal dimensions
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self.logger.info("CryptoLoader initialized with universal schema support")
         
-        Args:
-            market_data: List of transformed market records
-            
-        Returns:
-            Dictionary with loading statistics
-        """
-        logger.info(f"Loading {len(market_data)} market data records...")
+        # Cache for performance
+        self._instrument_mappings = None
+        self._date_cache = {}
         
-        if not market_data:
-            return {'inserted': 0, 'updated': 0, 'errors': 0, 'total_processed': 0}
-        
-        # Ensure required dates exist in date dimension
-        dates_needed = {record['record_date'] for record in market_data if record.get('record_date')}
-        self._ensure_dates_exist(dates_needed)
-        
-        # Process in batches for better performance
-        total_inserted = 0
-        total_updated = 0
-        total_errors = 0
-        
-        for i in range(0, len(market_data), self.batch_size):
-            batch = market_data[i:i + self.batch_size]
-            inserted, updated, errors = self._load_market_batch(batch)
-            
-            total_inserted += inserted
-            total_updated += updated
-            total_errors += errors
-            
-            logger.info(f"Processed batch {i//self.batch_size + 1}: {inserted} inserted, {updated} updated, {errors} errors")
-        
-        result = {
-            'inserted': total_inserted,
-            'updated': total_updated,
-            'errors': total_errors,
-            'total_processed': len(market_data)
+        # Statistics tracking
+        self._loading_stats = {
+            'total_records_processed': 0,
+            'total_records_inserted': 0,
+            'total_records_updated': 0,
+            'total_errors': 0,
+            'last_run_timestamp': None
         }
         
-        logger.info(f"Market data loading completed: {result}")
-        return result
-    
-    def load_historical_data(self, historical_data: Dict[str, List[Dict[str, Any]]]) -> Dict[str, int]:
-        """
-        Load historical data for multiple cryptocurrencies
-        
-        Args:
-            historical_data: Dictionary mapping coingecko_id to historical records
-            
-        Returns:
-            Dictionary with loading statistics
-        """
-        logger.info(f"Loading historical data for {len(historical_data)} cryptocurrencies...")
-        
-        total_stats = {'inserted': 0, 'updated': 0, 'errors': 0, 'total_processed': 0}
-        
-        for coingecko_id, records in historical_data.items():
-            if not records:
-                continue
-            
-            logger.info(f"Loading {len(records)} historical records for {coingecko_id}")
-            
-            # Ensure dates exist for this coin's historical data
-            dates_needed = {record['record_date'] for record in records if record.get('record_date')}
-            self._ensure_dates_exist(dates_needed)
-            
-            # Load historical records
-            stats = self._load_historical_records(coingecko_id, records)
-            
-            # Accumulate statistics
-            for key in total_stats:
-                total_stats[key] += stats.get(key, 0)
-        
-        logger.info(f"Historical data loading completed: {total_stats}")
-        return total_stats
-    
-    def _ensure_dates_exist(self, dates_needed: set):
-        """Ensure all required dates exist in universal date dimension"""
-        if not dates_needed:
-            return
-        
-        dates_added = 0
-        
-        with get_session() as session:
-            for date_obj in dates_needed:
-                if isinstance(date_obj, str):
-                    try:
-                        date_obj = datetime.fromisoformat(date_obj).date()
-                    except:
-                        continue
+    def get_instrument_mappings(self) -> Dict[str, int]:
+        """Get mapping of coingecko_id to instrument_id for all crypto instruments"""
+        if self._instrument_mappings is None:
+            with get_session() as session:
+                instruments = session.query(DimFinancialInstrument).filter(
+                    DimFinancialInstrument.instrument_type.in_(['cryptocurrency', 'stablecoin']),
+                    DimFinancialInstrument.coingecko_id.isnot(None),
+                    DimFinancialInstrument.is_active == True
+                ).all()
                 
-                if not isinstance(date_obj, date):
+                self._instrument_mappings = {
+                    instrument.coingecko_id: instrument.instrument_id
+                    for instrument in instruments
+                }
+                
+                self.logger.info(f"🔗 Found {len(self._instrument_mappings)} instrument mappings in database")
+        
+        return self._instrument_mappings
+    
+    def ensure_date_dimension(self, date_value: date) -> int:
+        """Ensure date exists in dimension table and return date_key"""
+        date_key = get_date_key(date_value)
+        
+        if date_key not in self._date_cache:
+            with get_session() as session:
+                existing = session.query(DimDate).filter_by(date_key=date_key).first()
+                
+                if not existing:
+                    date_record = create_date_dimension_record(date_value)
+                    session.add(date_record)
+                    session.commit()
+                    self.logger.info(f"Added new date record: {date_value}")
+                
+                self._date_cache[date_key] = True
+        
+        return date_key
+    
+    def load_market_data(self, market_data: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Load current market data (prices, market cap, volume)"""
+        self.logger.info(f"Loading {len(market_data)} market data records...")
+        
+        mappings = self.get_instrument_mappings()
+        results = {'inserted': 0, 'updated': 0, 'errors': 0, 'total_processed': 0}
+        
+        # Batch processing for performance
+        batch_size = 100
+        with get_session() as session:
+            
+            # Ensure today's date exists in dimension
+            today = date.today()
+            date_key = self.ensure_date_dimension(today)
+            self.logger.info(f"Added {1 if date_key else 0} new date records to dimension")
+            
+            for i in range(0, len(market_data), batch_size):
+                batch = market_data[i:i + batch_size]
+                batch_results = self._process_market_batch(session, batch, mappings, date_key)
+                
+                # Update results
+                for key in results:
+                    results[key] += batch_results[key]
+                
+                self.logger.info(f"Processed batch {i//batch_size + 1}: "
+                               f"{batch_results['inserted']} inserted, "
+                               f"{batch_results['updated']} updated, "
+                               f"{batch_results['errors']} errors")
+        
+        # Update statistics
+        self._loading_stats['total_records_processed'] += results['total_processed']
+        self._loading_stats['total_records_inserted'] += results['inserted']
+        self._loading_stats['total_records_updated'] += results['updated']
+        self._loading_stats['total_errors'] += results['errors']
+        self._loading_stats['last_run_timestamp'] = datetime.utcnow()
+        
+        self.logger.info(f"Market data loading completed: {results}")
+        return results
+    
+    def _process_market_batch(self, session, batch: List[Dict], mappings: Dict[str, int], 
+                            date_key: int) -> Dict[str, int]:
+        """Process a batch of market data records"""
+        results = {'inserted': 0, 'updated': 0, 'errors': 0, 'total_processed': 0}
+        
+        for record in batch:
+            results['total_processed'] += 1
+            
+            try:
+                coingecko_id = record.get('coingecko_id')
+                instrument_id = mappings.get(coingecko_id)
+                
+                if not instrument_id:
+                    self.logger.warning(f"Instrument not found for {coingecko_id}")
+                    results['errors'] += 1
                     continue
                 
-                date_key = get_date_key(date_obj)
+                # Check if record already exists (upsert logic)
+                existing = session.query(FactCryptocurrencyPrice).filter_by(
+                    instrument_id=instrument_id,
+                    date_key=date_key
+                ).first()
                 
-                # Check if date exists
-                existing = session.query(DimDate).filter_by(date_key=date_key).first()
-                if not existing:
-                    # Create new date record
-                    date_record = create_date_dimension_record(date_obj)
-                    session.add(date_record)
-                    dates_added += 1
-            
-            if dates_added > 0:
+                # Build price data dict - only include fields that exist in the database model
+                price_data = {
+                    'instrument_id': instrument_id,
+                    'date_key': date_key,
+                    'record_date': date.today(),
+                    'price': self._safe_decimal(record.get('price')),
+                    'market_cap': self._safe_decimal(record.get('market_cap')),
+                    'total_volume': self._safe_decimal(record.get('total_volume')),
+                    'price_change_24h': self._safe_decimal(record.get('price_change_24h')),
+                    'price_change_percentage_24h': self._safe_decimal(record.get('price_change_percentage_24h')),
+                    'market_cap_change_24h': self._safe_decimal(record.get('market_cap_change_24h')),
+                    'market_cap_change_percentage_24h': self._safe_decimal(record.get('market_cap_change_percentage_24h')),
+                    'circulating_supply': self._safe_decimal(record.get('circulating_supply')),
+                    'total_supply': self._safe_decimal(record.get('total_supply')),
+                    'max_supply': self._safe_decimal(record.get('max_supply')),
+                    'ath': self._safe_decimal(record.get('ath')),
+                    'ath_change_percentage': self._safe_decimal(record.get('ath_change_percentage')),
+                    'ath_date': self._safe_date(record.get('ath_date')),
+                    'atl': self._safe_decimal(record.get('atl')),
+                    'atl_change_percentage': self._safe_decimal(record.get('atl_change_percentage')),
+                    'atl_date': self._safe_date(record.get('atl_date')),
+                    'data_source': record.get('data_source', 'unknown')
+                }
+                
+                # Handle stablecoin-specific fields
+                if record.get('is_stablecoin'):
+                    price_data.update({
+                        'deviation_from_dollar': self._safe_decimal(record.get('deviation_from_dollar')),
+                        'within_01_percent': record.get('within_01_percent'),
+                        'within_05_percent': record.get('within_05_percent'),
+                        'within_1_percent': record.get('within_1_percent'),
+                        'price_band': record.get('price_band')
+                    })
+                
+                if existing:
+                    # Update existing record
+                    for key, value in price_data.items():
+                        if key not in ['instrument_id', 'date_key']:  # Don't update keys
+                            setattr(existing, key, value)
+                    existing.updated_at = datetime.utcnow()
+                    results['updated'] += 1
+                else:
+                    # Insert new record
+                    price_record = FactCryptocurrencyPrice(**price_data)
+                    session.add(price_record)
+                    results['inserted'] += 1
+                
                 session.commit()
-                logger.info(f"Added {dates_added} new date records to dimension")
+                
+            except Exception as e:
+                session.rollback()
+                self.logger.error(f"Error processing record for {record.get('coingecko_id')}: {e}")
+                results['errors'] += 1
+        
+        return results
     
-    def _load_market_batch(self, batch: List[Dict[str, Any]]) -> Tuple[int, int, int]:
-        """Load a batch of market records with upsert logic"""
-        inserted = 0
-        updated = 0
-        errors = 0
+    def load_historical_data(self, historical_data: Union[List[Dict[str, Any]], Dict[str, Any]]) -> Dict[str, int]:
+        """Load historical cryptocurrency data - handles both list and dict input"""
+        
+        # Handle different input formats from transformer
+        if isinstance(historical_data, dict):
+            # If it's a dict, extract the actual historical records
+            if 'historical_data' in historical_data:
+                actual_data = historical_data['historical_data']
+            elif 'data' in historical_data:
+                actual_data = historical_data['data']
+            else:
+                # Assume the dict values are the data records
+                actual_data = []
+                for records in historical_data.values():
+                    if isinstance(records, list):
+                        actual_data.extend(records)
+        else:
+            actual_data = historical_data
+        
+        # Ensure we have a list
+        if not isinstance(actual_data, list):
+            self.logger.warning(f"Expected list of historical records, got {type(actual_data)}")
+            return {'inserted': 0, 'updated': 0, 'errors': 0, 'total_processed': 0}
+        
+        # Filter out records with missing dates BEFORE processing
+        valid_data = []
+        for record in actual_data:
+            if not isinstance(record, dict):
+                continue
+                
+            record_date = record.get('date')
+            if record_date is None:
+                # Try alternative date fields
+                record_date = record.get('timestamp') or record.get('datetime')
+                
+            if record_date is None:
+                self.logger.warning(f"Skipping record with missing date: {record.get('coingecko_id', 'unknown')}")
+                continue
+            
+            # If we have a date, add it to the record (normalized)
+            if isinstance(record_date, str):
+                try:
+                    record['date'] = datetime.strptime(record_date, '%Y-%m-%d').date()
+                except ValueError:
+                    # Try other date formats
+                    for fmt in ['%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%f', '%m/%d/%Y']:
+                        try:
+                            record['date'] = datetime.strptime(record_date, fmt).date()
+                            break
+                        except ValueError:
+                            continue
+                    else:
+                        self.logger.warning(f"Could not parse date {record_date} for {record.get('coingecko_id')}")
+                        continue
+            elif isinstance(record_date, datetime):
+                record['date'] = record_date.date()
+            elif isinstance(record_date, date):
+                record['date'] = record_date
+            else:
+                self.logger.warning(f"Invalid date type {type(record_date)} for {record.get('coingecko_id')}")
+                continue
+                
+            valid_data.append(record)
+        
+        self.logger.info(f"Loading historical data for {len(set(r.get('coingecko_id', 'unknown') for r in valid_data))} cryptocurrencies...")
+        self.logger.info(f"Filtered {len(actual_data) - len(valid_data)} records with invalid dates")
+        
+        mappings = self.get_instrument_mappings()
+        results = {'inserted': 0, 'updated': 0, 'errors': 0, 'total_processed': 0}
+        
+        # Group by cryptocurrency for batch processing
+        by_crypto = {}
+        for record in valid_data:
+            crypto_id = record.get('coingecko_id')
+            if crypto_id not in by_crypto:
+                by_crypto[crypto_id] = []
+            by_crypto[crypto_id].append(record)
+        
+        # Process each cryptocurrency's historical data
+        for crypto_id, crypto_records in by_crypto.items():
+            self.logger.info(f"Loading {len(crypto_records)} historical records for {crypto_id}")
+            
+            # Ensure dates exist in dimension
+            unique_dates = set(record.get('date') for record in crypto_records if record.get('date'))
+            date_keys_added = 0
+            for date_value in unique_dates:
+                self.ensure_date_dimension(date_value)
+                date_keys_added += 1
+            
+            if date_keys_added > 0:
+                self.logger.info(f"Added {date_keys_added} new date records to dimension")
+            
+            crypto_results = self._process_historical_crypto(crypto_records, mappings)
+            
+            # Update results
+            for key in results:
+                results[key] += crypto_results[key]
+        
+        # Update statistics
+        self._loading_stats['total_records_processed'] += results['total_processed']
+        self._loading_stats['total_records_inserted'] += results['inserted']
+        self._loading_stats['total_records_updated'] += results['updated']
+        self._loading_stats['total_errors'] += results['errors']
+        
+        self.logger.info(f"Historical data loading completed: {results}")
+        return results
+    
+    def _process_historical_crypto(self, crypto_records: List[Dict], mappings: Dict[str, int]) -> Dict[str, int]:
+        """Process historical data for a single cryptocurrency"""
+        results = {'inserted': 0, 'updated': 0, 'errors': 0, 'total_processed': 0}
+        
+        if not crypto_records:
+            return results
+        
+        coingecko_id = crypto_records[0].get('coingecko_id')
+        instrument_id = mappings.get(coingecko_id)
+        
+        if not instrument_id:
+            self.logger.warning(f"Instrument not found for {coingecko_id}")
+            results['errors'] += len(crypto_records)
+            return results
         
         with get_session() as session:
-            for record in batch:
+            for record in crypto_records:
+                results['total_processed'] += 1
+                
                 try:
-                    # Get instrument_id from coingecko_id using universal dimension
-                    instrument = session.query(DimFinancialInstrument).filter_by(
-                        coingecko_id=record['coingecko_id']
-                    ).first()
-                    
-                    if not instrument:
-                        logger.warning(f"Instrument not found for {record['coingecko_id']}")
-                        errors += 1
+                    # Use the normalized date from our preprocessing
+                    record_date = record.get('date')
+                    if not record_date:
+                        self.logger.warning(f"Missing date in preprocessed record for {coingecko_id}")
+                        results['errors'] += 1
                         continue
                     
-                    # Prepare price record data
-                    price_record_data = self._prepare_price_record(record, instrument.instrument_id)
+                    date_key = get_date_key(record_date)
                     
-                    # Check if record exists (upsert logic)
+                    # Check if record already exists
                     existing = session.query(FactCryptocurrencyPrice).filter_by(
-                        instrument_id=instrument.instrument_id,
-                        record_date=price_record_data['record_date']
+                        instrument_id=instrument_id,
+                        date_key=date_key
                     ).first()
+                    
+                    # Build price data dict - only include fields that exist in the database model
+                    price_data = {
+                        'instrument_id': instrument_id,
+                        'date_key': date_key,
+                        'record_date': record_date,
+                        'price': self._safe_decimal(record.get('price')),
+                        'total_volume': self._safe_decimal(record.get('volume')),
+                        'high': self._safe_decimal(record.get('high')),
+                        'low': self._safe_decimal(record.get('low')),
+                        'open': self._safe_decimal(record.get('open')),
+                        'close': self._safe_decimal(record.get('close')),
+                        'daily_return': self._safe_decimal(record.get('daily_return')),
+                        'rolling_avg_7d': self._safe_decimal(record.get('rolling_avg_7d')),
+                        'rolling_avg_30d': self._safe_decimal(record.get('rolling_avg_30d')),
+                        'rolling_std_7d': self._safe_decimal(record.get('rolling_std_7d')),
+                        'rolling_std_30d': self._safe_decimal(record.get('rolling_std_30d')),
+                        'volatility': self._safe_decimal(record.get('volatility')),
+                        'data_source': record.get('data_source', 'unknown')
+                    }
                     
                     if existing:
                         # Update existing record
-                        self._update_price_record(existing, price_record_data)
-                        updated += 1
+                        for key, value in price_data.items():
+                            if key not in ['instrument_id', 'date_key']:
+                                setattr(existing, key, value)
+                        existing.updated_at = datetime.utcnow()
+                        results['updated'] += 1
                     else:
                         # Insert new record
-                        new_price = FactCryptocurrencyPrice(**price_record_data)
-                        session.add(new_price)
-                        inserted += 1
-                
-                except Exception as e:
-                    logger.warning(f"Failed to load market record for {record.get('coingecko_id')}: {e}")
-                    errors += 1
-                    continue
-            
-            session.commit()
-        
-        return inserted, updated, errors
-    
-    def _load_historical_records(self, coingecko_id: str, records: List[Dict[str, Any]]) -> Dict[str, int]:
-        """Load historical records for a specific cryptocurrency"""
-        inserted = 0
-        updated = 0
-        errors = 0
-        
-        with get_session() as session:
-            # Get instrument
-            instrument = session.query(DimFinancialInstrument).filter_by(
-                coingecko_id=coingecko_id
-            ).first()
-            
-            if not instrument:
-                logger.warning(f"Instrument not found for {coingecko_id}")
-                return {'inserted': 0, 'updated': 0, 'errors': len(records), 'total_processed': len(records)}
-            
-            # Process records in batches
-            for i in range(0, len(records), self.batch_size):
-                batch = records[i:i + self.batch_size]
-                
-                for record in batch:
-                    try:
-                        # Prepare historical price record
-                        price_record_data = self._prepare_price_record(record, instrument.instrument_id)
-                        
-                        # Check if record exists
-                        existing = session.query(FactCryptocurrencyPrice).filter_by(
-                            instrument_id=instrument.instrument_id,
-                            record_date=price_record_data['record_date']
-                        ).first()
-                        
-                        if existing:
-                            # Update existing record with historical data (merge approach)
-                            self._merge_historical_data(existing, price_record_data)
-                            updated += 1
-                        else:
-                            # Insert new historical record
-                            new_price = FactCryptocurrencyPrice(**price_record_data)
-                            session.add(new_price)
-                            inserted += 1
+                        price_record = FactCryptocurrencyPrice(**price_data)
+                        session.add(price_record)
+                        results['inserted'] += 1
                     
-                    except Exception as e:
-                        logger.warning(f"Failed to load historical record for {coingecko_id}: {e}")
-                        errors += 1
-                        continue
-                
-                # Commit batch
-                session.commit()
+                    session.commit()
+                    
+                except Exception as e:
+                    session.rollback()
+                    self.logger.error(f"Error processing historical record for {coingecko_id} on {record_date}: {e}")
+                    results['errors'] += 1
         
-        return {
-            'inserted': inserted,
-            'updated': updated,
-            'errors': errors,
-            'total_processed': len(records)
-        }
-    
-    def _prepare_price_record(self, record: Dict[str, Any], instrument_id: int) -> Dict[str, Any]:
-        """Prepare price record data for database insertion"""
-        
-        # Parse record date
-        record_date = record.get('record_date')
-        if isinstance(record_date, str):
-            record_date = datetime.fromisoformat(record_date).date()
-        
-        date_key = get_date_key(record_date) if record_date else None
-        
-        # Prepare complete price record
-        price_record_data = {
-            'instrument_id': instrument_id,
-            'date_key': date_key,
-            'record_date': record_date,
-            
-            # Core price data
-            'price': record.get('price'),
-            'market_cap': record.get('market_cap'),
-            'total_volume': record.get('total_volume'),
-            'circulating_supply': record.get('circulating_supply'),
-            
-            # Price ranges
-            'high_24h': record.get('high_24h'),
-            'low_24h': record.get('low_24h'),
-            
-            # Price changes
-            'price_change_24h': record.get('price_change_24h'),
-            'price_change_percentage_24h': record.get('price_change_percentage_24h'),
-            'price_change_percentage_7d': record.get('price_change_percentage_7d'),
-            'price_change_percentage_30d': record.get('price_change_percentage_30d'),
-            
-            # Market position
-            'market_cap_rank': record.get('market_cap_rank'),
-            'market_cap_change_24h': record.get('market_cap_change_24h'),
-            'market_cap_change_percentage_24h': record.get('market_cap_change_percentage_24h'),
-            
-            # Supply metrics
-            'total_supply': record.get('total_supply'),
-            'max_supply': record.get('max_supply'),
-            'fully_diluted_valuation': record.get('fully_diluted_valuation'),
-            
-            # All-time metrics
-            'ath': record.get('ath'),
-            'ath_change_percentage': record.get('ath_change_percentage'),
-            'ath_date': self._parse_date(record.get('ath_date')),
-            'atl': record.get('atl'),
-            'atl_change_percentage': record.get('atl_change_percentage'),
-            'atl_date': self._parse_date(record.get('atl_date')),
-            
-            # Stablecoin specific fields
-            'deviation_from_dollar': record.get('deviation_from_dollar'),
-            'within_01_percent': record.get('within_01_percent'),
-            'within_05_percent': record.get('within_05_percent'),
-            'within_1_percent': record.get('within_1_percent'),
-            'price_band': record.get('price_band'),
-            
-            # Technical indicators
-            'rolling_avg_7d': record.get('rolling_avg_7d'),
-            'rolling_avg_30d': record.get('rolling_avg_30d'),
-            'rolling_std_7d': record.get('rolling_std_7d'),
-            'rolling_std_30d': record.get('rolling_std_30d'),
-            'volatility_7d': record.get('volatility_7d'),
-            'volatility_30d': record.get('volatility_30d'),
-            
-            # Additional technical indicators
-            'bollinger_upper_20d': record.get('bollinger_upper_20d'),
-            'bollinger_lower_20d': record.get('bollinger_lower_20d'),
-            'rsi_14': record.get('rsi_14'),
-            
-            # Metadata
-            'data_source': record.get('data_source', 'coingecko'),
-            'last_updated': self._parse_datetime(record.get('last_updated')),
-            'created_at': datetime.now()
-        }
-        
-        return price_record_data
-    
-    def _update_price_record(self, existing_record: FactCryptocurrencyPrice, new_data: Dict[str, Any]):
-        """Update existing price record with new data"""
-        
-        # Update all fields except primary key and created_at
-        excluded_fields = {'id', 'created_at'}
-        
-        for key, value in new_data.items():
-            if key not in excluded_fields and hasattr(existing_record, key):
-                setattr(existing_record, key, value)
-    
-    def _merge_historical_data(self, existing_record: FactCryptocurrencyPrice, historical_data: Dict[str, Any]):
-        """
-        Merge historical data with existing record
-        Only update fields that are None in existing record or explicitly historical
-        """
-        
-        # Fields that should always be updated from historical data
-        historical_priority_fields = {
-            'rolling_avg_7d', 'rolling_avg_30d', 'rolling_std_7d', 'rolling_std_30d',
-            'volatility_7d', 'volatility_30d', 'bollinger_upper_20d', 'bollinger_lower_20d',
-            'rsi_14', 'price_change_percentage_7d', 'price_change_percentage_30d'
-        }
-        
-        # Fields that should only be updated if current value is None
-        fill_if_empty_fields = {
-            'price', 'market_cap', 'total_volume', 'price_change_24h',
-            'price_change_percentage_24h'
-        }
-        
-        for key, value in historical_data.items():
-            if not hasattr(existing_record, key) or key in {'id', 'created_at'}:
-                continue
-            
-            current_value = getattr(existing_record, key)
-            
-            # Always update historical priority fields
-            if key in historical_priority_fields and value is not None:
-                setattr(existing_record, key, value)
-            
-            # Update fill-if-empty fields only if current value is None
-            elif key in fill_if_empty_fields and current_value is None and value is not None:
-                setattr(existing_record, key, value)
-    
-    def _parse_date(self, date_value: Any) -> Optional[date]:
-        """Parse date value to date object"""
-        if date_value is None:
-            return None
-        
-        try:
-            if isinstance(date_value, str):
-                dt = datetime.fromisoformat(date_value.replace('Z', '+00:00'))
-                return dt.date()
-            elif isinstance(date_value, datetime):
-                return date_value.date()
-            elif isinstance(date_value, date):
-                return date_value
-        except (ValueError, TypeError):
-            pass
-        
-        return None
-    
-    def _parse_datetime(self, datetime_value: Any) -> Optional[datetime]:
-        """Parse datetime value"""
-        if datetime_value is None:
-            return None
-        
-        try:
-            if isinstance(datetime_value, str):
-                return datetime.fromisoformat(datetime_value.replace('Z', '+00:00'))
-            elif isinstance(datetime_value, datetime):
-                return datetime_value
-        except (ValueError, TypeError):
-            pass
-        
-        return None
-    
-    def get_instrument_mappings(self) -> Dict[str, int]:
-        """
-        Get mapping of coingecko_id to instrument_id for validation
-        
-        Returns:
-            Dictionary mapping coingecko_id to instrument_id
-        """
-        mappings = {}
-        
-        with get_session() as session:
-            instruments = session.query(DimFinancialInstrument).filter(
-                DimFinancialInstrument.coingecko_id.isnot(None),
-                DimFinancialInstrument.is_active == True
-            ).all()
-            
-            for instrument in instruments:
-                mappings[instrument.coingecko_id] = instrument.instrument_id
-        
-        return mappings
-    
-    def validate_data_integrity(self) -> Dict[str, Any]:
-        """
-        Perform data integrity checks on loaded cryptocurrency data
-        
-        Returns:
-            Validation report with integrity status
-        """
-        logger.info("Performing cryptocurrency data integrity validation...")
-        
-        validation_report = {
-            'timestamp': datetime.now(),
-            'checks': {},
-            'issues': [],
-            'summary': {}
-        }
-        
-        with get_session() as session:
-            # Check for orphaned records (prices without instruments)
-            orphaned_prices = session.query(FactCryptocurrencyPrice).filter(
-                ~FactCryptocurrencyPrice.instrument_id.in_(
-                    session.query(DimFinancialInstrument.instrument_id)
-                )
-            ).count()
-            
-            validation_report['checks']['orphaned_price_records'] = orphaned_prices
-            if orphaned_prices > 0:
-                validation_report['issues'].append(f"Found {orphaned_prices} orphaned price records")
-            
-            # Check for missing dates in date dimension
-            price_date_keys = session.query(FactCryptocurrencyPrice.date_key).distinct().all()
-            missing_dates = []
-            
-            for (date_key,) in price_date_keys:
-                if date_key and not session.query(DimDate).filter(DimDate.date_key == date_key).first():
-                    missing_dates.append(date_key)
-            
-            validation_report['checks']['missing_date_records'] = len(missing_dates)
-            if missing_dates:
-                validation_report['issues'].append(f"Found {len(missing_dates)} missing date records")
-            
-            # Check for duplicate price records
-            duplicate_count = session.execute("""
-                SELECT COUNT(*) FROM (
-                    SELECT instrument_id, record_date, COUNT(*) as cnt
-                    FROM fact_cryptocurrency_prices
-                    GROUP BY instrument_id, record_date
-                    HAVING COUNT(*) > 1
-                ) duplicates
-            """).scalar()
-            
-            validation_report['checks']['duplicate_price_records'] = duplicate_count
-            if duplicate_count > 0:
-                validation_report['issues'].append(f"Found {duplicate_count} duplicate price records")
-            
-            # Check data freshness
-            latest_price_date = session.query(FactCryptocurrencyPrice.record_date).order_by(
-                desc(FactCryptocurrencyPrice.record_date)
-            ).limit(1).scalar()
-            
-            if latest_price_date:
-                days_old = (date.today() - latest_price_date).days
-                validation_report['checks']['data_freshness_days'] = days_old
-                if days_old > 2:
-                    validation_report['issues'].append(f"Data is {days_old} days old")
-            
-            # Summary statistics
-            total_instruments = session.query(DimFinancialInstrument).filter(
-                DimFinancialInstrument.is_active == True,
-                DimFinancialInstrument.coingecko_id.isnot(None)
-            ).count()
-            
-            total_price_records = session.query(FactCryptocurrencyPrice).count()
-            
-            instruments_with_data = session.query(FactCryptocurrencyPrice.instrument_id).distinct().count()
-            
-            # Latest data coverage
-            latest_coverage = 0
-            if latest_price_date:
-                latest_coverage = session.query(FactCryptocurrencyPrice.instrument_id).filter(
-                    FactCryptocurrencyPrice.record_date == latest_price_date
-                ).distinct().count()
-            
-            validation_report['summary'] = {
-                'total_active_instruments': total_instruments,
-                'total_price_records': total_price_records,
-                'instruments_with_data': instruments_with_data,
-                'latest_price_date': latest_price_date.isoformat() if latest_price_date else None,
-                'latest_data_coverage': latest_coverage,
-                'data_coverage_percentage': (latest_coverage / total_instruments * 100) if total_instruments > 0 else 0,
-                'avg_records_per_instrument': total_price_records / instruments_with_data if instruments_with_data > 0 else 0
-            }
-        
-        logger.info(f"Data integrity validation completed: {len(validation_report['issues'])} issues found")
-        return validation_report
-    
-    def cleanup_old_data(self, days_to_keep: int = 365) -> int:
-        """
-        Clean up old cryptocurrency price data beyond retention period
-        
-        Args:
-            days_to_keep: Number of days to retain
-            
-        Returns:
-            Number of records deleted
-        """
-        cutoff_date = date.today() - timedelta(days=days_to_keep)
-        
-        with get_session() as session:
-            deleted_count = session.query(FactCryptocurrencyPrice).filter(
-                FactCryptocurrencyPrice.record_date < cutoff_date
-            ).delete()
-            
-            session.commit()
-        
-        logger.info(f"Cleaned up {deleted_count} old cryptocurrency price records before {cutoff_date}")
-        return deleted_count
+        return results
     
     def get_loading_statistics(self) -> Dict[str, Any]:
-        """
-        Get comprehensive loading statistics for monitoring
+        """Get loading statistics for test compatibility"""
+        return self._loading_stats.copy()
+    
+    def validate_data_integrity(self) -> Dict[str, Any]:
+        """Validate cryptocurrency data integrity using SQLAlchemy 2.x compatible queries"""
+        self.logger.info("Performing cryptocurrency data integrity validation...")
         
-        Returns:
-            Dictionary with loading statistics
-        """
         with get_session() as session:
-            # Basic counts
-            total_instruments = session.query(DimFinancialInstrument).filter(
-                DimFinancialInstrument.coingecko_id.isnot(None),
-                DimFinancialInstrument.is_active == True
-            ).count()
+            try:
+                # Check for duplicates using text() wrapper for raw SQL
+                duplicate_count = session.execute(text("""
+                    SELECT COUNT(*) FROM (
+                        SELECT instrument_id, date_key, COUNT(*) as cnt
+                        FROM fact_cryptocurrency_prices
+                        GROUP BY instrument_id, date_key
+                        HAVING COUNT(*) > 1
+                    ) duplicates
+                """)).scalar()
+                
+                # Check for missing prices using text() wrapper
+                missing_price_count = session.execute(text("""
+                    SELECT COUNT(*)
+                    FROM fact_cryptocurrency_prices
+                    WHERE price IS NULL OR price <= 0
+                """)).scalar()
+                
+                # Check data freshness using text() wrapper
+                latest_date = session.execute(text("""
+                    SELECT MAX(record_date)
+                    FROM fact_cryptocurrency_prices
+                """)).scalar()
+                
+                # Check total records using text() wrapper
+                total_records = session.execute(text("""
+                    SELECT COUNT(*)
+                    FROM fact_cryptocurrency_prices
+                """)).scalar()
+                
+                # Check instruments with data using text() wrapper
+                instruments_with_data = session.execute(text("""
+                    SELECT COUNT(DISTINCT instrument_id)
+                    FROM fact_cryptocurrency_prices
+                """)).scalar()
+                
+                # Check stablecoin deviations using text() wrapper
+                high_deviation_count = session.execute(text("""
+                    SELECT COUNT(*)
+                    FROM fact_cryptocurrency_prices fcp
+                    JOIN dim_financial_instruments dfi ON fcp.instrument_id = dfi.instrument_id
+                    WHERE dfi.is_stablecoin = true
+                    AND fcp.deviation_from_dollar > 0.05
+                """)).scalar()
+                
+                validation_report = {
+                    'total_records': total_records,
+                    'instruments_with_data': instruments_with_data,
+                    'duplicate_records': duplicate_count,
+                    'missing_prices': missing_price_count,
+                    'latest_data_date': latest_date,
+                    'high_stablecoin_deviations': high_deviation_count,
+                    'validation_timestamp': datetime.utcnow()
+                }
+                
+                # Calculate data quality score
+                issues = duplicate_count + missing_price_count + high_deviation_count
+                validation_report['data_quality_score'] = max(0, 100 - (issues * 5))  # Deduct 5 points per issue
+                
+                # Determine validation status
+                if issues == 0:
+                    validation_report['status'] = 'EXCELLENT'
+                elif issues <= 5:
+                    validation_report['status'] = 'GOOD'
+                elif issues <= 20:
+                    validation_report['status'] = 'NEEDS_ATTENTION'
+                else:
+                    validation_report['status'] = 'CRITICAL'
+                
+                self.logger.info(f"Data validation completed: {validation_report['status']} "
+                               f"(Score: {validation_report['data_quality_score']}/100)")
+                
+                return validation_report
+                
+            except Exception as e:
+                self.logger.error(f"Data validation failed: {e}")
+                return {
+                    'status': 'ERROR',
+                    'error': str(e),
+                    'validation_timestamp': datetime.utcnow()
+                }
+    
+    def get_latest_prices(self, coingecko_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Get latest prices for specified cryptocurrencies"""
+        with get_session() as session:
+            # Build query using text() wrapper for complex SQL
+            if coingecko_ids:
+                placeholders = ','.join([f':coin_{i}' for i in range(len(coingecko_ids))])
+                params = {f'coin_{i}': coin_id for i, coin_id in enumerate(coingecko_ids)}
+                
+                query = text(f"""
+                    SELECT 
+                        dfi.coingecko_id,
+                        dfi.display_name,
+                        dfi.instrument_code,
+                        fcp.price,
+                        fcp.market_cap,
+                        fcp.total_volume,
+                        fcp.price_change_percentage_24h,
+                        fcp.record_date,
+                        fcp.data_source
+                    FROM fact_cryptocurrency_prices fcp
+                    JOIN dim_financial_instruments dfi ON fcp.instrument_id = dfi.instrument_id
+                    WHERE dfi.coingecko_id IN ({placeholders})
+                    AND fcp.record_date = (
+                        SELECT MAX(record_date)
+                        FROM fact_cryptocurrency_prices fcp2
+                        WHERE fcp2.instrument_id = fcp.instrument_id
+                    )
+                    ORDER BY dfi.display_name
+                """)
+                
+                result = session.execute(query, params)
+            else:
+                query = text("""
+                    SELECT 
+                        dfi.coingecko_id,
+                        dfi.display_name,
+                        dfi.instrument_code,
+                        fcp.price,
+                        fcp.market_cap,
+                        fcp.total_volume,
+                        fcp.price_change_percentage_24h,
+                        fcp.record_date,
+                        fcp.data_source
+                    FROM fact_cryptocurrency_prices fcp
+                    JOIN dim_financial_instruments dfi ON fcp.instrument_id = dfi.instrument_id
+                    WHERE fcp.record_date = (
+                        SELECT MAX(record_date)
+                        FROM fact_cryptocurrency_prices fcp2
+                        WHERE fcp2.instrument_id = fcp.instrument_id
+                    )
+                    ORDER BY dfi.display_name
+                """)
+                
+                result = session.execute(query)
             
-            total_price_records = session.query(FactCryptocurrencyPrice).count()
+            return [dict(row._mapping) for row in result]
+    
+    def get_price_history(self, coingecko_id: str, days: int = 30) -> List[Dict[str, Any]]:
+        """Get price history for a specific cryptocurrency"""
+        with get_session() as session:
+            query = text("""
+                SELECT 
+                    fcp.record_date,
+                    fcp.price,
+                    fcp.total_volume,
+                    fcp.high,
+                    fcp.low,
+                    fcp.open,
+                    fcp.close,
+                    fcp.daily_return,
+                    fcp.rolling_avg_7d,
+                    fcp.rolling_avg_30d,
+                    fcp.volatility
+                FROM fact_cryptocurrency_prices fcp
+                JOIN dim_financial_instruments dfi ON fcp.instrument_id = dfi.instrument_id
+                WHERE dfi.coingecko_id = :coingecko_id
+                AND fcp.record_date >= CURRENT_DATE - INTERVAL ':days days'
+                ORDER BY fcp.record_date DESC
+            """)
             
-            # Date range
-            date_range = session.query(
-                session.query(FactCryptocurrencyPrice.record_date).order_by(
-                    FactCryptocurrencyPrice.record_date
-                ).limit(1).scalar_subquery().label('earliest'),
-                session.query(FactCryptocurrencyPrice.record_date).order_by(
-                    desc(FactCryptocurrencyPrice.record_date)
-                ).limit(1).scalar_subquery().label('latest')
-            ).first()
+            result = session.execute(query, {'coingecko_id': coingecko_id, 'days': days})
+            return [dict(row._mapping) for row in result]
+    
+    def _safe_decimal(self, value: Any) -> Optional[Decimal]:
+        """Safely convert value to Decimal"""
+        if value is None:
+            return None
+        try:
+            if isinstance(value, (int, float)):
+                return Decimal(str(value))
+            elif isinstance(value, str):
+                return Decimal(value) if value.strip() else None
+            elif isinstance(value, Decimal):
+                return value
+            else:
+                return None
+        except (ValueError, TypeError):
+            return None
+    
+    def _safe_date(self, value: Any) -> Optional[date]:
+        """Safely convert value to date"""
+        if value is None:
+            return None
+        try:
+            if isinstance(value, date):
+                return value
+            elif isinstance(value, datetime):
+                return value.date()
+            elif isinstance(value, str):
+                # Try common date formats
+                for fmt in ['%Y-%m-%d', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%f']:
+                    try:
+                        return datetime.strptime(value, fmt).date()
+                    except ValueError:
+                        continue
+                return None
+            else:
+                return None
+        except (ValueError, TypeError):
+            return None
+    
+    def cleanup_old_data(self, days_to_keep: int = 365) -> int:
+        """Clean up old cryptocurrency data beyond specified days"""
+        with get_session() as session:
+            cutoff_date = date.today() - timedelta(days=days_to_keep)
             
-            # Instrument breakdown
-            crypto_count = session.query(DimFinancialInstrument).filter(
-                DimFinancialInstrument.instrument_type == 'cryptocurrency',
-                DimFinancialInstrument.is_active == True
-            ).count()
+            deleted_count = session.execute(text("""
+                DELETE FROM fact_cryptocurrency_prices
+                WHERE record_date < :cutoff_date
+            """), {'cutoff_date': cutoff_date}).rowcount
             
-            stablecoin_count = session.query(DimFinancialInstrument).filter(
-                DimFinancialInstrument.instrument_type == 'stablecoin',
-                DimFinancialInstrument.is_active == True
-            ).count()
+            session.commit()
+            self.logger.info(f"Cleaned up {deleted_count} old records before {cutoff_date}")
             
-            # Recent activity
-            recent_records = session.query(FactCryptocurrencyPrice).filter(
-                FactCryptocurrencyPrice.record_date >= date.today() - timedelta(days=7)
-            ).count()
+            return deleted_count
+    
+    def get_summary_stats(self) -> Dict[str, Any]:
+        """Get summary statistics for cryptocurrency data"""
+        with get_session() as session:
+            stats = session.execute(text("""
+                SELECT 
+                    COUNT(*) as total_records,
+                    COUNT(DISTINCT instrument_id) as unique_instruments,
+                    MIN(record_date) as earliest_date,
+                    MAX(record_date) as latest_date
+                FROM fact_cryptocurrency_prices
+            """)).first()
             
-            return {
-                'total_instruments': total_instruments,
-                'cryptocurrency_count': crypto_count,
-                'stablecoin_count': stablecoin_count,
-                'total_price_records': total_price_records,
-                'earliest_date': date_range.earliest.isoformat() if date_range.earliest else None,
-                'latest_date': date_range.latest.isoformat() if date_range.latest else None,
-                'recent_records_7d': recent_records,
-                'avg_records_per_instrument': total_price_records / total_instruments if total_instruments > 0 else 0,
-                'statistics_timestamp': datetime.now().isoformat()
-            }
-
-# Convenience function for complete data loading
-def load_crypto_data(transformed_data: Dict[str, Any], batch_size: int = 1000) -> Dict[str, Any]:
-    """
-    Load complete cryptocurrency dataset (market + historical)
-    
-    Args:
-        transformed_data: Transformed data from CryptoTransformer
-        batch_size: Batch size for database operations
-        
-    Returns:
-        Loading results and statistics
-    """
-    loader = CryptoLoader(batch_size=batch_size)
-    
-    # Load market data
-    market_stats = loader.load_market_data(transformed_data.get('market_data', []))
-    
-    # Load historical data
-    historical_stats = loader.load_historical_data(transformed_data.get('historical_data', {}))
-    
-    # Validate data integrity
-    validation_report = loader.validate_data_integrity()
-    
-    # Get loading statistics
-    loading_statistics = loader.get_loading_statistics()
-    
-    return {
-        'market_data_stats': market_stats,
-        'historical_data_stats': historical_stats,
-        'validation_report': validation_report,
-        'loading_statistics': loading_statistics,
-        'loading_timestamp': datetime.now().isoformat()
-    }
-
-# Example usage and testing
-if __name__ == "__main__":
-    # Test with sample transformed data
-    sample_market_data = [
-        {
-            'coingecko_id': 'bitcoin',
-            'symbol': 'BTC',
-            'name': 'Bitcoin',
-            'record_date': date.today(),
-            'price': 45000.50,
-            'market_cap': 850000000000,
-            'total_volume': 25000000000,
-            'market_cap_rank': 1,
-            'price_change_percentage_24h': 2.5,
-            'data_source': 'test'
-        }
-    ]
-    
-    sample_historical_data = {
-        'bitcoin': [
-            {
-                'coingecko_id': 'bitcoin',
-                'record_date': date.today() - timedelta(days=1),
-                'price': 44000.0,
-                'market_cap': 840000000000,
-                'rolling_avg_7d': 44500.0,
-                'volatility_7d': 0.02,
-                'data_source': 'test_historical'
-            }
-        ]
-    }
-    
-    sample_transformed_data = {
-        'market_data': sample_market_data,
-        'historical_data': sample_historical_data
-    }
-    
-    try:
-        loader = CryptoLoader()
-        
-        print("🔄 Testing cryptocurrency data loading...")
-        
-        # Test instrument mapping
-        mappings = loader.get_instrument_mappings()
-        print(f"✅ Found {len(mappings)} instrument mappings")
-        
-        # Test data loading (only if Bitcoin instrument exists)
-        if 'bitcoin' in mappings:
-            # Test market data loading
-            market_stats = loader.load_market_data(sample_market_data)
-            print(f"✅ Market data loading: {market_stats}")
-            
-            # Test historical data loading
-            historical_stats = loader.load_historical_data(sample_historical_data)
-            print(f"✅ Historical data loading: {historical_stats}")
-        else:
-            print("⚠️ Bitcoin instrument not found in database - skipping load test")
-        
-        # Test validation
-        validation = loader.validate_data_integrity()
-        print(f"✅ Data validation: {len(validation['issues'])} issues found")
-        
-        # Test statistics
-        stats = loader.get_loading_statistics()
-        print(f"✅ Loading statistics: {stats['total_price_records']} total records")
-        
-        print("\n✅ All loader tests completed successfully!")
-        
-    except Exception as e:
-        print(f"❌ Error during testing: {e}")
-        import traceback
-        traceback.print_exc()
+            return dict(stats._mapping) if stats else {}
