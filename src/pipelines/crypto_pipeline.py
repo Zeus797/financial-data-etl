@@ -1,8 +1,7 @@
-# src/pipelines/crypto_pipeline.py
-"""
-Cryptocurrency Pipeline Orchestrator
-Coordinates collector → transformer → loader with comprehensive error handling
-"""
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent.parent))
+
 import asyncio 
 import logging
 from typing import Dict, Any, Optional
@@ -10,11 +9,13 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 import traceback
 
+
 # Change relative imports to absolute imports
 from src.collectors.crypto_collector import CryptoCollector, CryptoCollectorConfig
 from src.transformers.crypto_transformer import CryptoTransformer, CryptoTransformationConfig
 from src.loaders.crypto_loader import CryptoLoader
 from src.models.base import test_connection
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -254,67 +255,6 @@ class CryptoPipeline:
         logger.info(f"Collection validation passed: {len(market_data)} market records, {len(historical_data)} historical datasets")
     
     async def _execute_transformation_phase(self, collected_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute data transformation with quality validation"""
-        logger.info("🔧 Executing data transformation phase...")
-        
-        try:
-            transformer = CryptoTransformer(self.transformer_config)
-            transformed_data = transformer.transform_complete_dataset(collected_data)
-            
-            # Validate transformation results
-            #self._validate_transformation_results(transformed_data)
-            
-            # Store transformation results
-            self.result.transformation_result = transformed_data.get('transformation_metadata', {})
-            self.result.total_records_processed = (
-                len(transformed_data.get('market_data', [])) +
-                len(transformed_data.get('historical_data', []))
-            )
-            
-            # Handle quality issues
-            quality_report = transformed_data.get('quality_report', {})
-            quality_issues = quality_report.get('issues', [])
-            quality_warnings = quality_report.get('warnings', [])
-            
-            if quality_issues:
-                self.result.errors.extend(quality_issues)
-                if len(quality_issues) > self.config.max_acceptable_errors:
-                    raise Exception(f"Too many data quality issues: {len(quality_issues)} errors found")
-            
-            if quality_warnings:
-                self.result.warnings.extend(quality_warnings)
-            
-            logger.info(f"✅ Data transformation completed: {self.result.total_records_processed} records processed")
-            return transformed_data
-            
-        except Exception as e:
-            raise Exception(f"Data transformation failed: {e}")
-    
-    # UPDATE THIS METHOD in your src/pipelines/crypto_pipeline.py
-
-    def _validate_transformation_results(self, transformed_data: Dict[str, Any]):
-        """UPDATED: Validate transformation results with new data structure"""
-        market_data = transformed_data.get('market_data', [])
-        historical_data = transformed_data.get('historical_data', [])  # Now a list, not dict!
-        quality_report = transformed_data.get('quality_report', {})
-    
-        if len(market_data) == 0:
-            raise Exception("No market data after transformation")
-    
-        # Check quality report for critical issues
-        critical_issues = [
-            issue for issue in quality_report.get('issues', [])
-            if 'missing' in issue.lower() or 'invalid' in issue.lower()
-        ]
-    
-        if len(critical_issues) > self.config.max_acceptable_errors:
-            raise Exception(f"Critical data quality issues found: {critical_issues}")
-    
-        logger.info(f"Transformation validation passed: {len(market_data)} market records, {len(historical_data)} historical records transformed")
-
-    # ALSO UPDATE THIS METHOD in your src/pipelines/crypto_pipeline.py
-
-    async def _execute_transformation_phase(self, collected_data: Dict[str, Any]) -> Dict[str, Any]:
         """UPDATED: Execute data transformation with quality validation"""
         logger.info("🔧 Executing data transformation phase...")
     
@@ -448,6 +388,27 @@ class CryptoPipeline:
         logger.info(f"Pipeline execution completed in {self.result.duration_seconds:.2f} seconds")
         logger.info(f"Processing rate: {self.result.records_per_second:.2f} records/second")
 
+    def _validate_transformation_results(self, transformed_data: Dict[str, Any]):
+        """Validate transformation results meet minimum requirements"""
+        market_data = transformed_data.get('market_data', [])
+        historical_data = transformed_data.get('historical_data', [])
+        quality_report = transformed_data.get('quality_report', {})
+
+        if len(market_data) < self.config.require_minimum_records:
+            raise Exception(
+                f"Insufficient transformed market data: {len(market_data)} records, "
+                f"minimum required: {self.config.require_minimum_records}"
+            )
+
+        if self.config.enable_historical_data and len(historical_data) == 0:
+            raise Exception("Historical data transformation enabled but no historical data present")
+
+        # Optionally check for critical quality issues
+        issues = quality_report.get('issues', [])
+        if issues and len(issues) > self.config.max_acceptable_errors:
+            raise Exception(f"Too many transformation quality issues: {len(issues)} errors found")
+
+        logger.info(f"Transformation validation passed: {len(market_data)} market records, {len(historical_data)} historical datasets")
 # Convenience function for simple pipeline execution
 async def run_crypto_pipeline(config: Optional[CryptoPipelineConfig] = None) -> CryptoPipelineResult:
     """
