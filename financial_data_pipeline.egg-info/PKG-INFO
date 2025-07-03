@@ -1,12 +1,7 @@
 Metadata-Version: 2.4
 Name: financial_data_pipeline
-Version: 0.1.0
+Version: 1.0.0
+Requires-Python: >=3.8
 License-File: LICENSE
-Requires-Dist: pandas
-Requires-Dist: sqlalchemy
-Requires-Dist: psycopg2-binary
-Requires-Dist: aiohttp
-Requires-Dist: asyncio
-Requires-Dist: python-dotenv
 Dynamic: license-file
-Dynamic: requires-dist
+Dynamic: requires-python

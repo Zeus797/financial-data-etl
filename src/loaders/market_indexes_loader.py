@@ -1,714 +1,554 @@
 """
-src/loaders/market_indexes_loader.py
+src/loaders/market_index_loader.py
 
-Production-ready loader for market index data
-Handles database insertion with conflict resolution and validation
+Complete Market Index Loader for Universal Database Schema
+Loads transformed market index data into PostgreSQL with star schema design
 """
 
-import asyncio
+import pandas as pd
 import logging
 from datetime import datetime, date
 from typing import Dict, List, Any, Optional, Tuple
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import select, func, and_, or_
-from sqlalchemy.exc import IntegrityError, DataError
-import pandas as pd
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import text, and_
+from sqlalchemy.orm import Session
+import os
 
-# Import your database models (adjust imports based on your structure)
-from ..models.dimensions import DimEntities, DimFinancialInstruments, DimCurrencies, DimCountries, DimDates
-from ..models.facts import FactMarketIndexes
-from ..models.base import get_async_session
+# Import your database components
+from src.models.base import db_manager
+from src.models.universal_models import (
+    DimFinancialInstrument, DimCurrency, DimCountry, 
+    DimEntity, DimDate, FactMarketIndex, get_date_key, 
+    create_date_dimension_record
+)
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class MarketIndexesLoader:
+class MarketIndexLoader:
     """
-    Production-ready loader for market index data
+    Enterprise-grade loader for market index data using universal schema
     
     Features:
-    - Global market index tracking
-    - Regional and country classification
-    - Technical indicator storage
-    - Performance benchmarking
-    - High-volume data processing
-    - Comprehensive audit trail
+    - Populates dimension tables automatically
+    - Handles upserts (insert new, update existing)
+    - Comprehensive data validation
+    - Performance optimized batch processing
+    - Detailed logging and error handling
     """
     
     def __init__(self):
-        self.session: Optional[AsyncSession] = None
-        self.batch_size = 1000  # Larger batch for index data
-        self.stats = {
-            'indexes_instruments_created': 0,
-            'current_data_inserted': 0,
-            'current_data_updated': 0,
-            'historical_data_inserted': 0,
-            'historical_data_updated': 0,
-            'countries_processed': set(),
-            'regions_processed': set(),
-            'asset_classes_processed': set(),
-            'errors': []
+        self.db_manager = db_manager
+        self.batch_size = 1000  # Process records in batches
+        
+        # Index metadata mapping (from your transformer)
+        self.index_metadata = {
+            "S&P_500": {
+                "country": "US", "region": "North America", "continent": "North America",
+                "currency": "USD", "bloomberg_ticker": "SPX"
+            },
+            "Dow_Jones": {
+                "country": "US", "region": "North America", "continent": "North America", 
+                "currency": "USD", "bloomberg_ticker": "DJI"
+            },
+            "NASDAQ_Composite": {
+                "country": "US", "region": "North America", "continent": "North America",
+                "currency": "USD", "bloomberg_ticker": "IXIC"
+            },
+            "FTSE_100": {
+                "country": "GB", "region": "Europe", "continent": "Europe",
+                "currency": "GBP", "bloomberg_ticker": "UKX"
+            },
+            "DAX_40": {
+                "country": "DE", "region": "Europe", "continent": "Europe",
+                "currency": "EUR", "bloomberg_ticker": "DAX"
+            },
+            "CAC_40": {
+                "country": "FR", "region": "Europe", "continent": "Europe",
+                "currency": "EUR", "bloomberg_ticker": "CAC"
+            },
+            "JSE_Top_40": {
+                "country": "ZA", "region": "Africa", "continent": "Africa",
+                "currency": "ZAR", "bloomberg_ticker": "TOP40"
+            },
+            "Nikkei_225": {
+                "country": "JP", "region": "Asia-Pacific", "continent": "Asia",
+                "currency": "JPY", "bloomberg_ticker": "N225"
+            },
+            "Hang_Seng": {
+                "country": "HK", "region": "Asia-Pacific", "continent": "Asia",
+                "currency": "HKD", "bloomberg_ticker": "HSI"
+            },
+            "EURO_STOXX_50": {
+                "country": "EU", "region": "Europe", "continent": "Europe",
+                "currency": "EUR", "bloomberg_ticker": "SX5E"
+            }
         }
         
-        logger.info("MarketIndexesLoader initialized")
+        logger.info("MarketIndexLoader initialized with universal schema")
 
-    async def __aenter__(self):
-        """Async context manager entry"""
-        self.session = await get_async_session()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit"""
-        if self.session:
-            if exc_type:
-                await self.session.rollback()
-                logger.error(f"Transaction rolled back due to error: {exc_val}")
-            else:
-                await self.session.commit()
-                logger.info("Transaction committed successfully")
-            await self.session.close()
-
-    async def load_all_market_index_data(self, transformed_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Load all market index data into database"""
-        start_time = datetime.now()
-        logger.info("🚀 Starting market index data loading...")
+    def load_transformed_data(self, csv_file_path: str) -> bool:
+        """
+        Main method to load transformed market index data into database
         
+        Args:
+            csv_file_path: Path to the transformed_indexes.csv file
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
         try:
-            # Load current market data
-            if transformed_data.get('current_data'):
-                await self._load_current_index_data(transformed_data['current_data'])
+            logger.info("="*60)
+            logger.info("🚀 STARTING MARKET INDEX DATA LOAD")
+            logger.info("="*60)
+            logger.info(f"Source file: {csv_file_path}")
             
-            # Load historical data
-            if transformed_data.get('historical_data'):
-                await self._load_historical_index_data(transformed_data['historical_data'])
+            # Validate file exists
+            if not os.path.exists(csv_file_path):
+                raise FileNotFoundError(f"Transformed data file not found: {csv_file_path}")
             
-            end_time = datetime.now()
-            duration = end_time - start_time
+            # Step 1: Load and validate CSV data
+            logger.info("📄 Step 1: Loading and validating CSV data...")
+            df = self._load_and_validate_csv(csv_file_path)
             
-            # Compile results
-            load_results = {
-                'load_timestamp': end_time.isoformat(),
-                'load_duration_seconds': duration.total_seconds(),
-                'records_processed': {
-                    'indexes_created': self.stats['indexes_instruments_created'],
-                    'current_records': self.stats['current_data_inserted'] + self.stats['current_data_updated'],
-                    'historical_records': self.stats['historical_data_inserted'] + self.stats['historical_data_updated'],
-                    'countries_processed': len(self.stats['countries_processed']),
-                    'regions_processed': len(self.stats['regions_processed']),
-                    'asset_classes_processed': len(self.stats['asset_classes_processed']),
-                    'total_errors': len(self.stats['errors'])
-                },
-                'data_summary': {
-                    'countries': list(self.stats['countries_processed']),
-                    'regions': list(self.stats['regions_processed']),
-                    'asset_classes': list(self.stats['asset_classes_processed']),
-                    'error_details': self.stats['errors'][-10:]  # Last 10 errors
-                },
-                'loader_version': '1.0.0_market_indexes'
-            }
+            # Step 2: Create database tables if they don't exist
+            logger.info("🏗️  Step 2: Ensuring database tables exist...")
+            self._create_tables_if_needed()
             
-            logger.info("✅ Market index data loading completed successfully!")
-            return load_results
+            # Step 3: Populate dimension tables
+            logger.info("📊 Step 3: Populating dimension tables...")
+            self._populate_dimension_tables(df)
+            
+            # Step 4: Load fact data
+            logger.info("💾 Step 4: Loading fact data...")
+            records_loaded = self._load_fact_data(df)
+            
+            # Step 5: Validate loaded data
+            logger.info("✅ Step 5: Validating loaded data...")
+            self._validate_loaded_data()
+            
+            logger.info("="*60)
+            logger.info("🎉 MARKET INDEX DATA LOAD COMPLETED SUCCESSFULLY!")
+            logger.info(f"📈 Records loaded: {records_loaded:,}")
+            logger.info("="*60)
+            return True
             
         except Exception as e:
-            logger.error(f"❌ Market index loading failed: {e}")
-            self.stats['errors'].append(f"Critical error: {str(e)}")
+            logger.error("="*60)
+            logger.error("❌ MARKET INDEX DATA LOAD FAILED")
+            logger.error(f"Error: {str(e)}")
+            logger.error("="*60)
+            return False
+
+    def _load_and_validate_csv(self, csv_file_path: str) -> pd.DataFrame:
+        """Load CSV and perform basic validation"""
+        
+        # Load the CSV
+        df = pd.read_csv(csv_file_path)
+        logger.info(f"📄 Loaded CSV with {len(df):,} rows and {len(df.columns)} columns")
+        
+        # Show sample of data
+        logger.info(f"📅 Date range: {df['Date'].min()} to {df['Date'].max()}")
+        logger.info(f"📊 Unique indexes: {df['Index_Name'].nunique()}")
+        logger.info(f"🏷️  Index names: {sorted(df['Index_Name'].unique())}")
+        
+        # Validate required columns
+        required_columns = [
+            'Date', 'Index_Name', 'Ticker', 'Open', 'High', 'Low', 'Close', 'Volume',
+            'Country', 'Region', 'Currency', 'Daily_Return', 'Cumulative_Return',
+            'MA_50', 'MA_200', 'Volatility_10D', 'Volatility_30D', 'Normalized_Value'
+        ]
+        
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise ValueError(f"Missing required columns: {missing_columns}")
+        
+        # Convert Date column to datetime
+        df['Date'] = pd.to_datetime(df['Date'])
+        
+        # Validate data types and handle nulls
+        df = self._clean_numeric_columns(df)
+        
+        logger.info("✅ CSV validation completed successfully")
+        return df
+
+    def _clean_numeric_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Clean and validate numeric columns"""
+        
+        numeric_columns = [
+            'Open', 'High', 'Low', 'Close', 'Volume', 'Daily_Return', 
+            'Cumulative_Return', 'MA_50', 'MA_200', 'Volatility_10D', 
+            'Volatility_30D', 'Normalized_Value'
+        ]
+        
+        for col in numeric_columns:
+            if col in df.columns:
+                # Convert to numeric, coerce errors to NaN
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                
+                # Fill NaN values with 0 for most columns
+                if col == 'Volume':
+                    df[col] = df[col].fillna(0)
+                elif col in ['Daily_Return', 'Cumulative_Return']:
+                    df[col] = df[col].fillna(0)
+                elif col in ['MA_50', 'MA_200']:
+                    # For moving averages, keep NaN for initial periods
+                    pass
+                else:
+                    df[col] = df[col].fillna(0)
+        
+        return df
+
+    def _create_tables_if_needed(self):
+        """Create database tables if they don't exist"""
+        try:
+            self.db_manager.create_tables()
+            logger.info("✅ Database tables verified/created")
+        except Exception as e:
+            logger.error(f"❌ Error creating tables: {e}")
             raise
 
-    async def _load_current_index_data(self, current_data: List[Dict[str, Any]]) -> None:
-        """Load current market index data with dimension management"""
-        logger.info(f"Loading {len(current_data)} current index records...")
+    def _populate_dimension_tables(self, df: pd.DataFrame):
+        """Populate all dimension tables with data from the DataFrame"""
         
-        for record in current_data:
-            try:
-                # Track statistics
-                self.stats['countries_processed'].add(record.get('country', 'Unknown'))
-                self.stats['regions_processed'].add(record.get('region', 'Unknown'))
-                self.stats['asset_classes_processed'].add(record.get('asset_class', 'Unknown'))
-                
-                # Ensure country exists
-                country_code = await self._ensure_country_exists(record)
-                
-                # Ensure index entity exists (exchange or index provider)
-                entity_id = await self._ensure_index_entity_exists(record, country_code)
-                
-                # Ensure instrument exists
-                instrument_id = await self._ensure_index_instrument_exists(record, entity_id)
-                
-                # Ensure date dimension exists
-                record_date = datetime.now().date()
-                date_key = await self._ensure_date_exists(record_date)
-                
-                # Insert/update current index data
-                await self._upsert_current_index_data(record, instrument_id, date_key)
-                
-            except Exception as e:
-                error_msg = f"Failed to load current data for {record.get('index_name', 'unknown')}: {e}"
-                logger.error(error_msg)
-                self.stats['errors'].append(error_msg)
+        with self.db_manager.get_session() as session:
+            
+            # 1. Populate Countries
+            logger.info("   📍 Populating countries dimension...")
+            self._populate_countries(session, df)
+            
+            # 2. Populate Currencies  
+            logger.info("   💱 Populating currencies dimension...")
+            self._populate_currencies(session, df)
+            
+            # 3. Populate Entities (exchanges/providers)
+            logger.info("   🏢 Populating entities dimension...")
+            self._populate_entities(session, df)
+            
+            # 4. Populate Financial Instruments
+            logger.info("   📈 Populating financial instruments dimension...")
+            self._populate_instruments(session, df)
+            
+            # 5. Populate Date Dimension
+            logger.info("   📅 Populating date dimension...")
+            self._populate_dates(session, df)
+            
+            session.commit()
+            logger.info("✅ All dimension tables populated successfully")
 
-    async def _load_historical_index_data(self, historical_data: Dict[str, List[Dict[str, Any]]]) -> None:
-        """Load historical index data in batches"""
-        logger.info(f"Loading historical data for {len(historical_data)} indexes...")
+    def _populate_countries(self, session: Session, df: pd.DataFrame):
+        """Populate countries dimension table"""
         
-        for index_key, records in historical_data.items():
-            if not records:
-                continue
+        unique_countries = df[['Country', 'Region']].drop_duplicates()
+        
+        for _, row in unique_countries.iterrows():
+            country_code = self._get_country_code(row['Country'])
+            
+            # Check if country exists
+            existing = session.query(DimCountry).filter_by(country_code=country_code).first()
+            if not existing:
+                country = DimCountry(
+                    country_code=country_code,
+                    country_name=row['Country'],
+                    region=row['Region']
+                )
+                session.add(country)
+                logger.debug(f"   Added country: {row['Country']} ({country_code})")
+
+    def _populate_currencies(self, session: Session, df: pd.DataFrame):
+        """Populate currencies dimension table"""
+        
+        unique_currencies = df['Currency'].unique()
+        
+        for currency_code in unique_currencies:
+            # Check if currency exists
+            existing = session.query(DimCurrency).filter_by(currency_code=currency_code).first()
+            if not existing:
+                currency_name = self._get_currency_name(currency_code)
+                country_code = self._get_currency_country(currency_code)
                 
-            logger.info(f"Processing {len(records)} historical records for {index_key}...")
-            
-            try:
-                # Process in batches for performance
-                for i in range(0, len(records), self.batch_size):
-                    batch = records[i:i + self.batch_size]
-                    await self._process_historical_index_batch(batch, index_key)
-                    
-                    # Log progress for large datasets
-                    if len(records) > self.batch_size:
-                        progress = min(i + self.batch_size, len(records))
-                        logger.info(f"  Progress: {progress}/{len(records)} records processed")
-                
-            except Exception as e:
-                error_msg = f"Failed to load historical data for {index_key}: {e}"
-                logger.error(error_msg)
-                self.stats['errors'].append(error_msg)
+                currency = DimCurrency(
+                    currency_code=currency_code,
+                    currency_name=currency_name,
+                    country_code=country_code
+                )
+                session.add(currency)
+                logger.debug(f"   Added currency: {currency_code}")
 
-    async def _process_historical_index_batch(self, batch: List[Dict[str, Any]], index_key: str) -> None:
-        """Process a batch of historical index records"""
+    def _populate_entities(self, session: Session, df: pd.DataFrame):
+        """Populate entities dimension table (exchanges/index providers)"""
         
-        # Get instrument_id for this index
-        symbol = batch[0].get('symbol')
-        instrument_id = await self._get_instrument_id_by_symbol(symbol)
-        if not instrument_id:
-            raise ValueError(f"Instrument not found for symbol: {symbol}")
-        
-        # Prepare batch data for insertion
-        historical_records = []
-        
-        for record in batch:
-            try:
-                # Parse record date
-                record_date = datetime.fromisoformat(record['record_date']).date()
-                date_key = await self._ensure_date_exists(record_date)
-                
-                # Prepare historical record
-                historical_record = {
-                    'instrument_id': instrument_id,
-                    'date_key': date_key,
-                    'record_date': record_date,
-                    'timestamp': record.get('timestamp'),
-                    'open_value': record.get('open_value'),
-                    'high_value': record.get('high_value'),
-                    'low_value': record.get('low_value'),
-                    'close_value': record.get('close_value'),
-                    'volume': record.get('volume'),
-                    'daily_return': record.get('daily_return'),
-                    'volatility_7d': record.get('volatility_7d'),
-                    'volatility_30d': record.get('volatility_30d'),
-                    'volatility_90d': record.get('volatility_90d'),
-                    'ma_20d': record.get('ma_20d'),
-                    'ma_50d': record.get('ma_50d'),
-                    'ma_200d': record.get('ma_200d'),
-                    'ema_12': record.get('ema_12'),
-                    'ema_26': record.get('ema_26'),
-                    'macd': record.get('macd'),
-                    'macd_signal': record.get('macd_signal'),
-                    'rsi': record.get('rsi'),
-                    'rsi_signal': record.get('rsi_signal'),
-                    'bb_upper': record.get('bb_upper'),
-                    'bb_middle': record.get('bb_middle'),
-                    'bb_lower': record.get('bb_lower'),
-                    'bb_position': record.get('bb_position'),
-                    'cumulative_return': record.get('cumulative_return'),
-                    'return_7d': record.get('return_7d'),
-                    'return_30d': record.get('return_30d'),
-                    'return_90d': record.get('return_90d'),
-                    'return_252d': record.get('return_252d'),
-                    'sharpe_ratio_30d': record.get('sharpe_ratio_30d'),
-                    'sharpe_ratio_90d': record.get('sharpe_ratio_90d'),
-                    'sharpe_ratio_252d': record.get('sharpe_ratio_252d'),
-                    'drawdown': record.get('drawdown'),
-                    'max_drawdown': record.get('max_drawdown'),
-                    'momentum_5d': record.get('momentum_5d'),
-                    'momentum_10d': record.get('momentum_10d'),
-                    'momentum_20d': record.get('momentum_20d'),
-                    'trend_strength_20d': record.get('trend_strength_20d'),
-                    'resistance_level': record.get('resistance_level'),
-                    'support_level': record.get('support_level'),
-                    'var_95_30d': record.get('var_95_30d'),
-                    'var_95_90d': record.get('var_95_90d'),
-                    'volatility_cluster': record.get('volatility_cluster'),
-                    'data_source': record.get('data_source', 'yahoo_finance'),
-                    'created_at': datetime.now(),
-                    'updated_at': datetime.now()
-                }
-                
-                historical_records.append(historical_record)
-                
-            except Exception as e:
-                error_msg = f"Failed to prepare historical index record: {e}"
-                logger.warning(error_msg)
-                self.stats['errors'].append(error_msg)
-        
-        # Batch upsert historical records
-        if historical_records:
-            await self._batch_upsert_historical_index_data(historical_records)
-
-    async def _ensure_country_exists(self, record: Dict[str, Any]) -> str:
-        """Ensure country exists in dimension table"""
-        country = record.get('country', 'Unknown')
-        region = record.get('region', 'other')
-        
-        # Map country to standard codes
-        country_code_map = {
-            'US': 'USA', 'GB': 'GBR', 'DE': 'DEU', 'FR': 'FRA', 'JP': 'JPN',
-            'CN': 'CHN', 'HK': 'HKG', 'ZA': 'ZAF', 'KE': 'KEN', 'EU': 'EUR',
-            'EMERGING': 'EMG'
-        }
-        country_code = country_code_map.get(country, country[:3].upper())
-        
-        # Check if country exists
-        result = await self.session.execute(
-            select(DimCountries.country_code)
-            .where(DimCountries.country_code == country_code)
-        )
-        existing_country = result.scalar_one_or_none()
-        
-        if existing_country:
-            return existing_country
-        
-        # Create new country
-        try:
-            # Map region to continent
-            continent_map = {
-                'North America': 'North America',
-                'Europe': 'Europe',
-                'Asia': 'Asia',
-                'Africa': 'Africa',
-                'Global': 'Global'
-            }
-            continent = continent_map.get(region, 'Unknown')
-            
-            new_country = DimCountries(
-                country_code=country_code,
-                country_name=self._get_full_country_name(country),
-                region=region,
-                continent=continent,
-                latitude=None,  # Could be enhanced with geocoding
-                longitude=None,
-                currency_code=self._get_default_currency(country_code)
-            )
-            
-            self.session.add(new_country)
-            await self.session.flush()
-            
-            logger.debug(f"Created new country: {country} ({country_code})")
-            return country_code
-            
-        except IntegrityError:
-            # Handle race condition
-            await self.session.rollback()
-            return country_code
-
-    async def _ensure_index_entity_exists(self, record: Dict[str, Any], country_code: str) -> int:
-        """Ensure index entity (exchange/provider) exists in dimension table"""
-        index_name = record.get('index_name', 'Unknown Index')
-        
-        # Extract exchange/provider name from index name
-        entity_name = self._extract_entity_name(index_name)
-        
-        # Check if entity exists
-        result = await self.session.execute(
-            select(DimEntities.entity_id)
-            .where(and_(
-                DimEntities.entity_name == entity_name,
-                DimEntities.entity_type == 'exchange'
-            ))
-        )
-        existing_entity = result.scalar_one_or_none()
-        
-        if existing_entity:
-            return existing_entity
-        
-        # Create new entity
-        try:
-            new_entity = DimEntities(
-                entity_name=entity_name,
-                entity_type='exchange',
-                entity_code=entity_name[:10].upper().replace(' ', ''),
-                country_code=country_code,
-                website_url=None,
-                is_active=True,
-                created_at=datetime.now(),
-                updated_at=datetime.now()
-            )
-            
-            self.session.add(new_entity)
-            await self.session.flush()
-            
-            self.stats['indexes_instruments_created'] += 1
-            logger.debug(f"Created new index entity: {entity_name}")
-            
-            return new_entity.entity_id
-            
-        except IntegrityError:
-            # Handle race condition
-            await self.session.rollback()
-            result = await self.session.execute(
-                select(DimEntities.entity_id)
-                .where(and_(
-                    DimEntities.entity_name == entity_name,
-                    DimEntities.entity_type == 'exchange'
-                ))
-            )
-            return result.scalar_one()
-
-    async def _ensure_index_instrument_exists(self, record: Dict[str, Any], entity_id: int) -> int:
-        """Ensure index instrument exists in dimension table"""
-        symbol = record.get('symbol')
-        index_name = record.get('index_name')
-        asset_class = record.get('asset_class', 'equity_index')
-        
-        # Check if instrument exists
-        result = await self.session.execute(
-            select(DimFinancialInstruments.instrument_id)
-            .where(and_(
-                DimFinancialInstruments.instrument_code == symbol,
-                DimFinancialInstruments.instrument_type == 'market_index'
-            ))
-        )
-        existing_instrument = result.scalar_one_or_none()
-        
-        if existing_instrument:
-            return existing_instrument
-        
-        # Create new instrument
-        try:
-            new_instrument = DimFinancialInstruments(
-                instrument_type='market_index',
-                instrument_name=index_name,
-                instrument_code=symbol,
-                currency_code=self._get_index_currency(record),
-                entity_id=entity_id,
-                description=f"{asset_class} - {record.get('region', 'Global')} market index",
-                is_active=True,
-                created_at=datetime.now()
-            )
-            
-            self.session.add(new_instrument)
-            await self.session.flush()
-            
-            logger.debug(f"Created new index instrument: {symbol}")
-            return new_instrument.instrument_id
-            
-        except IntegrityError:
-            # Handle race condition
-            await self.session.rollback()
-            result = await self.session.execute(
-                select(DimFinancialInstruments.instrument_id)
-                .where(and_(
-                    DimFinancialInstruments.instrument_code == symbol,
-                    DimFinancialInstruments.instrument_type == 'market_index'
-                ))
-            )
-            return result.scalar_one()
-
-    async def _ensure_date_exists(self, record_date: date) -> int:
-        """Ensure date exists in date dimension (shared utility)"""
-        date_key = int(record_date.strftime('%Y%m%d'))
-        
-        # Check if date exists
-        result = await self.session.execute(
-            select(DimDates.date_key)
-            .where(DimDates.date_key == date_key)
-        )
-        existing_date = result.scalar_one_or_none()
-        
-        if existing_date:
-            return existing_date
-        
-        # Create new date record
-        try:
-            new_date = DimDates(
-                date_key=date_key,
-                full_date=record_date,
-                year=record_date.year,
-                quarter=(record_date.month - 1) // 3 + 1,
-                month=record_date.month,
-                month_name=record_date.strftime('%B'),
-                week=record_date.isocalendar()[1],
-                day_of_year=record_date.timetuple().tm_yday,
-                day_of_month=record_date.day,
-                day_of_week=record_date.weekday() + 1,
-                day_name=record_date.strftime('%A'),
-                is_weekend=record_date.weekday() >= 5,
-                is_holiday=False,
-                fiscal_year=record_date.year,
-                fiscal_quarter=(record_date.month - 1) // 3 + 1
-            )
-            
-            self.session.add(new_date)
-            await self.session.flush()
-            
-            return date_key
-            
-        except IntegrityError:
-            # Handle race condition
-            await self.session.rollback()
-            return date_key
-
-    async def _upsert_current_index_data(self, record: Dict[str, Any], instrument_id: int, date_key: int) -> None:
-        """Upsert current market index data"""
-        
-        # Prepare current index record
-        current_data = {
-            'instrument_id': instrument_id,
-            'date_key': date_key,
-            'record_date': datetime.now().date(),
-            'timestamp': int(datetime.now().timestamp() * 1000),
-            'current_value': record.get('current_value'),
-            'daily_change': record.get('daily_change'),
-            'daily_change_percent': record.get('daily_change_percent'),
-            'volume': record.get('volume'),
-            'high_52w': record.get('high_52w'),
-            'low_52w': record.get('low_52w'),
-            'market_cap': record.get('market_cap'),
-            'pe_ratio': record.get('pe_ratio'),
-            'data_source': record.get('data_source', 'yahoo_finance'),
-            'created_at': datetime.now(),
-            'updated_at': datetime.now()
+        # Create entities for index providers/exchanges
+        index_entities = {
+            "S&P_500": {"name": "S&P Dow Jones Indices", "type": "index_provider", "country": "US"},
+            "Dow_Jones": {"name": "S&P Dow Jones Indices", "type": "index_provider", "country": "US"},
+            "NASDAQ_Composite": {"name": "NASDAQ", "type": "exchange", "country": "US"},
+            "FTSE_100": {"name": "FTSE Russell", "type": "index_provider", "country": "GB"},
+            "DAX_40": {"name": "Deutsche Börse", "type": "exchange", "country": "DE"},
+            "CAC_40": {"name": "Euronext", "type": "exchange", "country": "FR"},
+            "JSE_Top_40": {"name": "Johannesburg Stock Exchange", "type": "exchange", "country": "ZA"},
+            "Nikkei_225": {"name": "Nikkei Inc", "type": "index_provider", "country": "JP"},
+            "Hang_Seng": {"name": "Hang Seng Indexes", "type": "index_provider", "country": "HK"},
+            "EURO_STOXX_50": {"name": "STOXX Ltd", "type": "index_provider", "country": "EU"}
         }
         
-        # Use PostgreSQL ON CONFLICT for upsert
-        stmt = insert(FactMarketIndexes).values(current_data)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=['instrument_id', 'record_date'],
-            set_={
-                'current_value': stmt.excluded.current_value,
-                'daily_change': stmt.excluded.daily_change,
-                'daily_change_percent': stmt.excluded.daily_change_percent,
-                'volume': stmt.excluded.volume,
-                'high_52w': stmt.excluded.high_52w,
-                'low_52w': stmt.excluded.low_52w,
-                'market_cap': stmt.excluded.market_cap,
-                'pe_ratio': stmt.excluded.pe_ratio,
-                'updated_at': datetime.now()
-            }
-        )
-        
-        await self.session.execute(stmt)
-        self.stats['current_data_inserted'] += 1
+        for index_name, entity_info in index_entities.items():
+            # Check if entity exists
+            existing = session.query(DimEntity).filter_by(
+                entity_name=entity_info["name"],
+                entity_type=entity_info["type"]
+            ).first()
+            
+            if not existing:
+                entity = DimEntity(
+                    entity_name=entity_info["name"],
+                    entity_type=entity_info["type"],
+                    country_code=entity_info["country"],
+                    is_active=True
+                )
+                session.add(entity)
+                logger.debug(f"   Added entity: {entity_info['name']}")
 
-    async def _batch_upsert_historical_index_data(self, historical_records: List[Dict[str, Any]]) -> None:
-        """Batch upsert historical index data"""
+    def _populate_instruments(self, session: Session, df: pd.DataFrame):
+        """Populate financial instruments dimension table"""
         
-        if not historical_records:
-            return
+        unique_instruments = df[['Index_Name', 'Ticker', 'Currency', 'Country']].drop_duplicates()
         
-        try:
-            # Use bulk insert with ON CONFLICT
-            stmt = insert(FactMarketIndexes).values(historical_records)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=['instrument_id', 'record_date'],
-                set_={
-                    'close_value': stmt.excluded.close_value,
-                    'high_value': stmt.excluded.high_value,
-                    'low_value': stmt.excluded.low_value,
-                    'volume': stmt.excluded.volume,
-                    'daily_return': stmt.excluded.daily_return,
-                    'volatility_30d': stmt.excluded.volatility_30d,
-                    'ma_50d': stmt.excluded.ma_50d,
-                    'ma_200d': stmt.excluded.ma_200d,
-                    'rsi': stmt.excluded.rsi,
-                    'macd': stmt.excluded.macd,
-                    'sharpe_ratio_252d': stmt.excluded.sharpe_ratio_252d,
-                    'max_drawdown': stmt.excluded.max_drawdown,
-                    'updated_at': datetime.now()
-                }
-            )
+        for _, row in unique_instruments.iterrows():
+            index_name = row['Index_Name']
             
-            await self.session.execute(stmt)
-            self.stats['historical_data_inserted'] += len(historical_records)
+            # Check if instrument exists
+            existing = session.query(DimFinancialInstrument).filter_by(
+                instrument_code=row['Ticker']
+            ).first()
             
-        except Exception as e:
-            logger.error(f"Batch index upsert failed: {e}")
-            # Fall back to individual inserts
-            for record in historical_records:
-                try:
-                    stmt = insert(FactMarketIndexes).values(record)
-                    stmt = stmt.on_conflict_do_nothing(
-                        index_elements=['instrument_id', 'record_date']
+            if not existing:
+                # Get metadata for this index
+                metadata = self.index_metadata.get(index_name, {})
+                
+                # Find the issuer entity
+                issuer = session.query(DimEntity).filter(
+                    DimEntity.country_code == row['Country'],
+                    DimEntity.entity_type.in_(['exchange', 'index_provider'])
+                ).first()
+                
+                instrument = DimFinancialInstrument(
+                    instrument_type='market_index',
+                    instrument_name=index_name.replace('_', ' '),
+                    instrument_code=row['Ticker'],
+                    display_name=index_name.replace('_', ' '),
+                    primary_currency_code=row['Currency'],
+                    issuer_entity_id=issuer.entity_id if issuer else None,
+                    asset_class='equity_index',
+                    risk_level='medium',
+                    bloomberg_ticker=metadata.get('bloomberg_ticker'),
+                    description=f"{index_name.replace('_', ' ')} market index",
+                    is_active=True
+                )
+                session.add(instrument)
+                logger.debug(f"   Added instrument: {index_name}")
+
+    def _populate_dates(self, session: Session, df: pd.DataFrame):
+        """Populate date dimension table"""
+        
+        # Get unique dates from the data
+        unique_dates = df['Date'].dt.date.unique()
+        
+        for date_obj in unique_dates:
+            date_key = get_date_key(date_obj)
+            
+            # Check if date exists
+            existing = session.query(DimDate).filter_by(date_key=date_key).first()
+            if not existing:
+                date_record = create_date_dimension_record(date_obj)
+                session.add(date_record)
+        
+        logger.debug(f"   Added {len(unique_dates)} date records")
+
+    def _load_fact_data(self, df: pd.DataFrame) -> int:
+        """Load fact table data in batches"""
+        
+        total_records = 0
+        batch_count = 0
+        
+        # Process data in batches
+        for batch_start in range(0, len(df), self.batch_size):
+            batch_end = min(batch_start + self.batch_size, len(df))
+            batch_df = df.iloc[batch_start:batch_end]
+            
+            batch_count += 1
+            logger.info(f"   Processing batch {batch_count}: rows {batch_start+1}-{batch_end}")
+            
+            with self.db_manager.get_session() as session:
+                batch_records = self._process_fact_batch(session, batch_df)
+                total_records += batch_records
+                session.commit()
+        
+        logger.info(f"✅ Loaded {total_records:,} fact records in {batch_count} batches")
+        return total_records
+
+    def _process_fact_batch(self, session: Session, batch_df: pd.DataFrame) -> int:
+        """Process a single batch of fact data"""
+        
+        records_processed = 0
+        
+        for _, row in batch_df.iterrows():
+            try:
+                # Get instrument ID
+                instrument = session.query(DimFinancialInstrument).filter_by(
+                    instrument_code=row['Ticker']
+                ).first()
+                
+                if not instrument:
+                    logger.warning(f"Instrument not found for ticker: {row['Ticker']}")
+                    continue
+                
+                # Get date key
+                date_key = get_date_key(row['Date'].date())
+                
+                # Check if record already exists (upsert logic)
+                existing = session.query(FactMarketIndex).filter(
+                    and_(
+                        FactMarketIndex.instrument_id == instrument.instrument_id,
+                        FactMarketIndex.record_date == row['Date'].date()
                     )
-                    await self.session.execute(stmt)
-                    self.stats['historical_data_inserted'] += 1
-                except Exception as individual_error:
-                    logger.warning(f"Individual index insert failed: {individual_error}")
-                    self.stats['errors'].append(f"Index record insert failed: {individual_error}")
-
-    async def _get_instrument_id_by_symbol(self, symbol: str) -> Optional[int]:
-        """Get instrument ID by symbol"""
-        result = await self.session.execute(
-            select(DimFinancialInstruments.instrument_id)
-            .where(and_(
-                DimFinancialInstruments.instrument_code == symbol,
-                DimFinancialInstruments.instrument_type == 'market_index'
-            ))
-        )
-        return result.scalar_one_or_none()
-
-    def _extract_entity_name(self, index_name: str) -> str:
-        """Extract exchange/provider name from index name"""
-        # Mapping of index names to exchange/provider names
-        entity_mapping = {
-            'S&P 500': 'S&P Global',
-            'Dow Jones': 'S&P Dow Jones Indices',
-            'NASDAQ': 'NASDAQ',
-            'FTSE 100': 'FTSE Russell',
-            'DAX': 'Deutsche Börse',
-            'CAC 40': 'Euronext',
-            'EURO STOXX 50': 'STOXX',
-            'Nikkei 225': 'Nikkei Inc.',
-            'Hang Seng': 'Hang Seng Indexes',
-            'Shanghai Composite': 'Shanghai Stock Exchange',
-            'JSE Top 40': 'JSE Limited',
-            'NSE 20': 'Nairobi Securities Exchange',
-            'MSCI Emerging Markets': 'MSCI',
-            'VIX': 'CBOE'
-        }
-        
-        # Try exact match first
-        for index_key, entity in entity_mapping.items():
-            if index_key.lower() in index_name.lower():
-                return entity
-        
-        # Default extraction logic
-        if 'S&P' in index_name:
-            return 'S&P Global'
-        elif 'MSCI' in index_name:
-            return 'MSCI'
-        elif 'FTSE' in index_name:
-            return 'FTSE Russell'
-        elif 'Dow Jones' in index_name or 'DJI' in index_name:
-            return 'S&P Dow Jones Indices'
-        elif 'NASDAQ' in index_name:
-            return 'NASDAQ'
-        else:
-            # Extract first word as exchange name
-            return index_name.split()[0] if index_name else 'Unknown Exchange'
-
-    def _get_full_country_name(self, country_code: str) -> str:
-        """Get full country name from code"""
-        country_names = {
-            'US': 'United States',
-            'GB': 'United Kingdom',
-            'DE': 'Germany',
-            'FR': 'France',
-            'JP': 'Japan',
-            'CN': 'China',
-            'HK': 'Hong Kong',
-            'ZA': 'South Africa',
-            'KE': 'Kenya',
-            'EU': 'European Union',
-            'EMERGING': 'Emerging Markets'
-        }
-        return country_names.get(country_code, country_code)
-
-    def _get_default_currency(self, country_code: str) -> str:
-        """Get default currency for country"""
-        currency_map = {
-            'USA': 'USD', 'US': 'USD',
-            'GBR': 'GBP', 'GB': 'GBP',
-            'DEU': 'EUR', 'DE': 'EUR',
-            'FRA': 'EUR', 'FR': 'EUR',
-            'JPN': 'JPY', 'JP': 'JPY',
-            'CHN': 'CNY', 'CN': 'CNY',
-            'HKG': 'HKD', 'HK': 'HKD',
-            'ZAF': 'ZAR', 'ZA': 'ZAR',
-            'KEN': 'KES', 'KE': 'KES',
-            'EUR': 'EUR',
-            'EMG': 'USD'  # Emerging markets often priced in USD
-        }
-        return currency_map.get(country_code, 'USD')
-
-    def _get_index_currency(self, record: Dict[str, Any]) -> str:
-        """Determine index currency from record data"""
-        country = record.get('country', 'US')
-        return self._get_default_currency(country)
-
-# Convenience function for standalone usage
-async def load_market_index_data(transformed_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Standalone function to load market index data"""
-    async with MarketIndexesLoader() as loader:
-        return await loader.load_all_market_index_data(transformed_data)
-
-if __name__ == "__main__":
-    # Test the loader with sample data
-    import asyncio
-    
-    async def test_loader():
-        sample_data = {
-            'current_data': [
-                {
-                    'index_key': 'sp500',
-                    'index_name': 'S&P 500',
-                    'symbol': '^GSPC',
-                    'current_value': 4500.25,
-                    'daily_change': 25.50,
-                    'daily_change_percent': 0.57,
-                    'volume': 3500000000,
-                    'high_52w': 4800.00,
-                    'low_52w': 3800.00,
-                    'market_cap': 45000000000000,
-                    'pe_ratio': 22.5,
-                    'region': 'North America',
-                    'country': 'US',
-                    'asset_class': 'equity_index',
-                    'data_source': 'yahoo_finance'
-                }
-            ],
-            'historical_data': {
-                'sp500': [
-                    {
-                        'index_key': 'sp500',
-                        'index_name': 'S&P 500',
-                        'symbol': '^GSPC',
-                        'record_date': '2025-06-01',
-                        'timestamp': 1717200000000,
-                        'open_value': 4475.00,
-                        'high_value': 4510.00,
-                        'low_value': 4465.00,
-                        'close_value': 4500.25,
-                        'volume': 3500000000,
-                        'daily_return': 0.0057,
-                        'volatility_30d': 0.15,
-                        'ma_50d': 4450.00,
-                        'ma_200d': 4300.00,
-                        'rsi': 65.5,
-                        'macd': 12.5,
-                        'sharpe_ratio_252d': 1.25,
-                        'max_drawdown': -0.08,
-                        'data_source': 'yahoo_finance'
-                    }
-                ]
-            }
-        }
-        
-        try:
-            async with MarketIndexesLoader() as loader:
-                result = await loader.load_all_market_index_data(sample_data)
-                print("✅ Market Indexes Loader Test Results:")
-                print(f"   Load duration: {result['load_duration_seconds']:.2f} seconds")
-                print(f"   Indexes created: {result['records_processed']['indexes_created']}")
-                print(f"   Current records: {result['records_processed']['current_records']}")
-                print(f"   Historical records: {result['records_processed']['historical_records']}")
-                print(f"   Countries: {result['data_summary']['countries']}")
-                print(f"   Regions: {result['data_summary']['regions']}")
-                print(f"   Asset classes: {result['data_summary']['asset_classes']}")
-                print(f"   Errors: {result['records_processed']['total_errors']}")
+                ).first()
                 
-        except Exception as e:
-            print(f"❌ Loader test failed: {e}")
+                if existing:
+                    # Update existing record
+                    self._update_fact_record(existing, row)
+                else:
+                    # Create new record
+                    fact_record = self._create_fact_record(instrument.instrument_id, date_key, row)
+                    session.add(fact_record)
+                
+                records_processed += 1
+                
+            except Exception as e:
+                logger.error(f"Error processing record for {row.get('Ticker', 'unknown')}: {e}")
+                continue
+        
+        return records_processed
+
+    def _create_fact_record(self, instrument_id: int, date_key: int, row: pd.Series) -> FactMarketIndex:
+        """Create a new fact record"""
+        
+        return FactMarketIndex(
+            instrument_id=instrument_id,
+            date_key=date_key,
+            record_date=row['Date'].date(),
+            index_value=float(row['Close']) if pd.notna(row['Close']) else None,
+            opening_value=float(row['Open']) if pd.notna(row['Open']) else None,
+            high_value=float(row['High']) if pd.notna(row['High']) else None,
+            low_value=float(row['Low']) if pd.notna(row['Low']) else None,
+            closing_value=float(row['Close']) if pd.notna(row['Close']) else None,
+            daily_return=float(row['Daily_Return']) if pd.notna(row['Daily_Return']) else None,
+            volume=float(row['Volume']) if pd.notna(row['Volume']) else None,
+            moving_avg_50d=float(row['MA_50']) if pd.notna(row['MA_50']) else None,
+            moving_avg_200d=float(row['MA_200']) if pd.notna(row['MA_200']) else None,
+            data_source='yfinance'
+        )
+
+    def _update_fact_record(self, existing_record: FactMarketIndex, row: pd.Series):
+        """Update an existing fact record"""
+        
+        existing_record.index_value = float(row['Close']) if pd.notna(row['Close']) else existing_record.index_value
+        existing_record.opening_value = float(row['Open']) if pd.notna(row['Open']) else existing_record.opening_value
+        existing_record.high_value = float(row['High']) if pd.notna(row['High']) else existing_record.high_value
+        existing_record.low_value = float(row['Low']) if pd.notna(row['Low']) else existing_record.low_value
+        existing_record.closing_value = float(row['Close']) if pd.notna(row['Close']) else existing_record.closing_value
+        existing_record.daily_return = float(row['Daily_Return']) if pd.notna(row['Daily_Return']) else existing_record.daily_return
+        existing_record.volume = float(row['Volume']) if pd.notna(row['Volume']) else existing_record.volume
+        existing_record.moving_avg_50d = float(row['MA_50']) if pd.notna(row['MA_50']) else existing_record.moving_avg_50d
+        existing_record.moving_avg_200d = float(row['MA_200']) if pd.notna(row['MA_200']) else existing_record.moving_avg_200d
+
+    def _validate_loaded_data(self):
+        """Validate that data was loaded correctly"""
+        
+        with self.db_manager.get_session() as session:
+            # Count records in each table
+            counts = {
+                'Countries': session.query(DimCountry).count(),
+                'Currencies': session.query(DimCurrency).count(),
+                'Entities': session.query(DimEntity).count(),
+                'Instruments': session.query(DimFinancialInstrument).count(),
+                'Dates': session.query(DimDate).count(),
+                'Market Index Facts': session.query(FactMarketIndex).count()
+            }
+            
+            logger.info("📊 Final data counts:")
+            for table, count in counts.items():
+                logger.info(f"   {table}: {count:,} records")
+            
+            # Validate date range
+            date_range = session.query(
+                session.query(FactMarketIndex.record_date).order_by(FactMarketIndex.record_date.asc()).limit(1).scalar_subquery(),
+                session.query(FactMarketIndex.record_date).order_by(FactMarketIndex.record_date.desc()).limit(1).scalar_subquery()
+            ).first()
+            
+            if date_range and date_range[0] and date_range[1]:
+                logger.info(f"📅 Date range: {date_range[0]} to {date_range[1]}")
+
+    # Helper methods for data mapping
+    def _get_country_code(self, country_name: str) -> str:
+        """Map country names to ISO codes"""
+        country_mapping = {
+            'United States': 'US', 'United Kingdom': 'GB', 'Germany': 'DE',
+            'France': 'FR', 'South Africa': 'ZA', 'Japan': 'JP', 
+            'Hong Kong': 'HK', 'Eurozone': 'EU'
+        }
+        return country_mapping.get(country_name, country_name[:2].upper())
+
+    def _get_currency_name(self, currency_code: str) -> str:
+        """Map currency codes to names"""
+        currency_mapping = {
+            'USD': 'US Dollar', 'GBP': 'British Pound', 'EUR': 'Euro',
+            'ZAR': 'South African Rand', 'JPY': 'Japanese Yen', 'HKD': 'Hong Kong Dollar'
+        }
+        return currency_mapping.get(currency_code, f"{currency_code} Currency")
+
+    def _get_currency_country(self, currency_code: str) -> str:
+        """Map currency codes to primary countries"""
+        currency_country_mapping = {
+            'USD': 'US', 'GBP': 'GB', 'EUR': 'EU',
+            'ZAR': 'ZA', 'JPY': 'JP', 'HKD': 'HK'
+        }
+        return currency_country_mapping.get(currency_code, 'US')
+
+# Convenience function for easy usage
+def load_market_index_data(csv_file_path: str = None) -> bool:
+    """
+    Convenience function to load market index data
     
-    asyncio.run(test_loader())
+    Args:
+        csv_file_path: Path to transformed data file. 
+                      Defaults to 'data/processed_data/transformed_indexes.csv'
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if csv_file_path is None:
+        csv_file_path = "data/processed_data/transformed_indexes.csv"
+    
+    loader = MarketIndexLoader()
+    return loader.load_transformed_data(csv_file_path)
+
+# Example usage and testing
+if __name__ == "__main__":
+    print("🚀 Testing Market Index Loader...")
+    
+    # Test database connection first
+    from src.models.base import db_manager
+    
+    if db_manager.test_connection():
+        print("✅ Database connection successful")
+        
+        # Load the data
+        csv_path = "data/processed_data/transformed_indexes.csv"
+        if load_market_index_data(csv_path):
+            print("🎉 Market index data loaded successfully!")
+        else:
+            print("❌ Failed to load market index data")
+    else:
+        print("❌ Database connection failed")
+        print("Please check your database configuration")

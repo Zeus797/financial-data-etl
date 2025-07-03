@@ -403,7 +403,7 @@ class SimpleIndexTransformer:
         self.normalize_indexes()
         
         # Add market events
-        self.add_market_events()
+        self.add_market_events() 
         
         # Save transformed data
         output_file = self.save_transformed_data()
@@ -423,4 +423,3 @@ if __name__ == "__main__":
     
     print(f"\nTransformation complete!")
     print(f"Transformed data saved to: {output_file}")
-    print(f"Find additional files and visualizations in: {transformer.output_dir}")

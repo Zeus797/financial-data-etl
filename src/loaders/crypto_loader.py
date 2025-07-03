@@ -12,7 +12,7 @@ from typing import Dict, List, Any, Optional, Union
 from datetime import datetime, date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import text  # Import text for raw SQL queries
+from sqlalchemy import text  # Import text for raw SQL queries 
 from src.models.base import get_session, db_manager
 from src.models.universal_models import (
     DimFinancialInstrument, DimDate, FactCryptocurrencyPrice,

@@ -33,9 +33,6 @@ def download_single_index(symbol, name, start_date, end_date, output_dir):
         # Create directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
 
-        df.to_csv(filepath, index=False)  # ← This was missing!
-
-        logging.info(f"✅ Successfully saved {len(df)} days of data for {name}")
 
         # Create organized directory structure
         raw_data_dir = os.path.join(output_dir, "raw_data", "market_indexes")
@@ -43,6 +40,10 @@ def download_single_index(symbol, name, start_date, end_date, output_dir):
 
         filename = f"{name}_{start_date}_to_{end_date}.csv"
         filepath = os.path.join(raw_data_dir, filename)
+
+        df.to_csv(filepath, index=False)  # ← This was missing!
+
+        logging.info(f"✅ Successfully saved {len(df)} days of data for {name}")
 
 
         logging.info(f"✅ Successfully saved {len(df)} days of data for {name}")
@@ -169,25 +170,23 @@ def create_combined_file(output_dir):
     logging.info("Creating combined file...")
 
     raw_data_dir = os.path.join(output_dir, "raw_data", "market_indexes")
-    csv_files = [f for f in os.listdir(raw_data_dir) if f.endswith('.csv')]
-
-    if not csv_files:
-        logging.warning("No csv files found to combine")
-        return None
     
+    csv_files = [f for f in os.listdir(raw_data_dir) if f.endswith('.csv') and not f.startswith('all_')]
+    
+    # Rest of the function stays the same, but save combined file to raw_data_dir too
     all_dfs = []
     for file in csv_files:
-        filepath = os.path.join(output_dir, file)
+        filepath = os.path.join(raw_data_dir, file)  # ← Add raw_data_dir here
         try:
             df = pd.read_csv(filepath)
             all_dfs.append(df)
-            logging.info(f"Added {file} to combined dataset ({len(df)}rows)")
+            logging.info(f"Added {file} to combined dataset ({len(df)} rows)")
         except Exception as e:
-            logging.error(f"Error reading {file}: str{e}")
-
+            logging.error(f"Error reading {file}: {str(e)}")
+    
     if all_dfs:
         combined_df = pd.concat(all_dfs, ignore_index=True)
-        combined_filepath = os.path.join(output_dir, 'all_indexes_combined.csv')
+        combined_filepath = os.path.join(raw_data_dir, 'all_indexes_combined.csv')  # ← Save to raw_data_dir
         combined_df.to_csv(combined_filepath, index=False)
 
         logging.info(f"✅ Combined dataset created with {len(combined_df)} total rows")
