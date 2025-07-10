@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Add Fixed Deposit</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .form-group { margin: 15px 0; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select, textarea { width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 3px; }
+        .btn { padding: 10px 20px; margin: 10px; text-decoration: none; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        .btn:hover { background: #0056b3; }
+        .btn-secondary { background: #6c757d; }
+        .btn-secondary:hover { background: #545b62; }
+    </style>
+</head>
+<body>
+    <h1>Add Fixed Deposit</h1>
+    
+    <form method="POST">
+        <div class="form-group">
+            <label for="bank">Bank Name*:</label>
+            <input type="text" id="bank" name="bank" required placeholder="e.g., KCB Group Ltd">
+        </div>
+        
+        <div class="form-group">
+            <label for="yield_per_annum">Yield Per Annum (%)*:</label>
+            <input type="number" id="yield_per_annum" name="yield_per_annum" step="0.01" min="0" max="50" required placeholder="e.g., 6.30">
+        </div>
+        
+        <div class="form-group">
+            <label for="minimum_amount">Minimum Amount*:</label>
+            <input type="number" id="minimum_amount" name="minimum_amount" step="100" min="0" required placeholder="e.g., 5000">
+        </div>
+        
+        <div class="form-group">
+            <label for="term_months">Term (Months)*:</label>
+            <select id="term_months" name="term_months" required>
+                <option value="">Select term</option>
+                <option value="1">1 Month</option>
+                <option value="3">3 Months</option>
+                <option value="6">6 Months</option>
+                <option value="12">12 Months</option>
+                <option value="24">24 Months</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label for="penalty_severity">Penalty Severity*:</label>
+            <select id="penalty_severity" name="penalty_severity" required>
+                <option value="">Select severity</option>
+                <option value="Strict">Strict</option>
+                <option value="Moderate">Moderate</option>
+                <option value="Flexible">Flexible</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label for="penalty_description">Penalty Description:</label>
+            <textarea id="penalty_description" name="penalty_description" rows="2" placeholder="e.g., Forfeit all interest acquired"></textarea>
+        </div>
+        
+        <div class="form-group">
+            <label for="source">Source URL:</label>
+            <input type="url" id="source" name="source" placeholder="e.g., https://ke.kcbgroup.com/">
+        </div>
+        
+        <div class="form-group">
+            <label for="currency">Currency*:</label>
+            <select id="currency" name="currency" required>
+                <option value="KES">KES - Kenyan Shilling</option>
+                <option value="USD">USD - US Dollar</option>
+                <option value="EUR">EUR - Euro</option>
+            </select>
+        </div>
+        
+        <a href="/" class="btn btn-secondary">Back to Dashboard</a>
+        <button type="submit" class="btn">Add Fixed Deposit</button>
+    </form>
+</body>
+</html>

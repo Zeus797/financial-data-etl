@@ -1,43 +1,48 @@
-
+# Environment and secrets
 .env
-.env.local
-.env.production
+.env.*
 *.key
 *.pem
 config/secrets.yml
 credentials/
 
+# Python
 __pycache__/
 *.py[cod]
-*.class
 *.so
-.Python
-venv/
+*.class
+
+# Virtual environments
 .venv/
+venv/
 env/
 ENV/
+.Python
 
+# DB and logs
 *.db
 *.sqlite3
 *.sql
-
 logs/
 *.log
 
+# Editors and OS
 .vscode/
 .idea/
-*.swp
-*.swo
-
 .DS_Store
 Thumbs.db
 
+# Test / Coverage
 .coverage
 .pytest_cache/
 htmlcov/
 
+# Docs (if using Sphinx)
 docs/_build/
 
+# Temp files
 *.tmp
 *.bak
 *.orig
+*.swp
+*.swo

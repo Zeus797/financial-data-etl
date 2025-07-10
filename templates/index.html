@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MMF & Fixed Deposit Manager</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .card { border: 1px solid #ddd; padding: 20px; margin: 20px 0; border-radius: 5px; }
+        .btn { padding: 10px 20px; margin: 10px; text-decoration: none; background: #007bff; color: white; border-radius: 3px; }
+        .btn:hover { background: #0056b3; }
+        .alert { padding: 10px; margin: 10px 0; border-radius: 3px; }
+        .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .alert-error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .alert-info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+    </style>
+</head>
+<body>
+    <h1>MMF & Fixed Deposit Manager</h1>
+    
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+    
+    <div class="card">
+        <h2>Quick Actions</h2>
+        <a href="/add_fixed_deposit" class="btn">Add Fixed Deposit</a>
+        <a href="/add_mmf" class="btn">Add Money Market Fund</a>
+        <a href="/test" class="btn">Test System</a>
+    </div>
+    
+    {% if rate_summary %}
+    <div class="card">
+        <h2>Current Rate Summary</h2>
+        {% if rate_summary.fixed_deposits %}
+            <p><strong>Fixed Deposits:</strong> {{ rate_summary.fixed_deposits.count }} records, 
+               Average: {{ "%.2f"|format(rate_summary.fixed_deposits.avg_rate) }}%</p>
+        {% endif %}
+        {% if rate_summary.money_market_funds %}
+            <p><strong>Money Market Funds:</strong> {{ rate_summary.money_market_funds.count }} records, 
+               Average: {{ "%.2f"|format(rate_summary.money_market_funds.avg_rate) }}%</p>
+        {% endif %}
+    </div>
+    {% endif %}
+</body>
+</html>

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Add Money Market Fund</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .form-group { margin: 15px 0; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select { width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 3px; }
+        .btn { padding: 10px 20px; margin: 10px; text-decoration: none; background: #28a745; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        .btn:hover { background: #218838; }
+        .btn-secondary { background: #6c757d; }
+        .btn-secondary:hover { background: #545b62; }
+        .info { background: #d1ecf1; padding: 10px; margin: 10px 0; border-radius: 3px; color: #0c5460; }
+    </style>
+</head>
+<body>
+    <h1>Add Money Market Fund</h1>
+    
+    <form method="POST">
+        <div class="form-group">
+            <label for="company">Company*:</label>
+            <input type="text" id="company" name="company" required placeholder="e.g., Cytonn Asset Managers Limited">
+        </div>
+        
+        <div class="form-group">
+            <label for="product_name">Product Name*:</label>
+            <input type="text" id="product_name" name="product_name" required placeholder="e.g., Cytonn Money Market Fund">
+        </div>
+        
+        <div class="form-group">
+            <label for="average_annual_yield">Average Annual Yield (%)*:</label>
+            <input type="number" id="average_annual_yield" name="average_annual_yield" step="0.01" min="0" max="50" required placeholder="e.g., 13.63">
+        </div>
+        
+        <div class="form-group">
+            <label for="management_fee">Management Fee (%)*:</label>
+            <input type="number" id="management_fee" name="management_fee" step="0.01" min="0" max="10" required placeholder="e.g., 2.00">
+        </div>
+        
+        <div class="form-group">
+            <label for="withholding_tax">Withholding Tax (%):</label>
+            <input type="number" id="withholding_tax" name="withholding_tax" step="0.01" min="0" max="50" value="15.00" placeholder="e.g., 15.00">
+        </div>
+        
+        <div class="form-group">
+            <label for="minimum_investment">Minimum Investment:</label>
+            <input type="number" id="minimum_investment" name="minimum_investment" step="100" min="0" value="1000" placeholder="e.g., 1000">
+        </div>
+        
+        <div class="form-group">
+            <label for="currency">Currency*:</label>
+            <select id="currency" name="currency" required>
+                <option value="KES">KES - Kenyan Shilling</option>
+                <option value="USD">USD - US Dollar</option>
+                <option value="EUR">EUR - Euro</option>
+            </select>
+        </div>
+        
+        <div class="info">
+            <strong>Note:</strong> Net yield will be automatically calculated as 
+            (Average Annual Yield - Management Fee) × (1 - Withholding Tax Rate)
+        </div>
+        
+        <a href="/" class="btn btn-secondary">Back to Dashboard</a>
+        <button type="submit" class="btn">Add Money Market Fund</button>
+    </form>
+</body>
+</html>

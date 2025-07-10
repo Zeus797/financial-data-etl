@@ -1,0 +1,3 @@
+project_name,project_id,standard_type,project_type,country,vintage_year,price_per_tonne,volume_tonnes,methodology,additionality_assessment,permanence_rating,co_benefits_level,registry,status
+Tanzania Forest Protection Initiative,VCS-2098,VCS,Forestry and Land Use,Tanzania,2023,9.8,35000,VM0015,proven,medium,multiple,Verra,active
+South Africa Wind Energy Project,GS-3567,Gold Standard,Renewable Energy,South Africa,2024,18.45,28000,GS-ESM-002,proven,high,multiple,Gold Standard,active
