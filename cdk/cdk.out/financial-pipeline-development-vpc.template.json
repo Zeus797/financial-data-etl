@@ -1,0 +1,796 @@
+{
+ "Resources": {
+  "FinancialPipelineVpc85BF59ED": {
+   "Type": "AWS::EC2::VPC",
+   "Properties": {
+    "CidrBlock": "10.0.0.0/16",
+    "EnableDnsHostnames": true,
+    "EnableDnsSupport": true,
+    "InstanceTenancy": "default",
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc-vpc"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/Resource"
+   }
+  },
+  "FinancialPipelineVpcPublicSubnetSubnet1Subnet2DC5B41A": {
+   "Type": "AWS::EC2::Subnet",
+   "Properties": {
+    "AvailabilityZone": "eu-west-1a",
+    "CidrBlock": "10.0.0.0/24",
+    "MapPublicIpOnLaunch": true,
+    "Tags": [
+     {
+      "Key": "aws-cdk:subnet-name",
+      "Value": "PublicSubnet"
+     },
+     {
+      "Key": "aws-cdk:subnet-type",
+      "Value": "Public"
+     },
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet1"
+     }
+    ],
+    "VpcId": {
+     "Ref": "FinancialPipelineVpc85BF59ED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet1/Subnet"
+   }
+  },
+  "FinancialPipelineVpcPublicSubnetSubnet1RouteTableD8FFF062": {
+   "Type": "AWS::EC2::RouteTable",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet1"
+     }
+    ],
+    "VpcId": {
+     "Ref": "FinancialPipelineVpc85BF59ED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet1/RouteTable"
+   }
+  },
+  "FinancialPipelineVpcPublicSubnetSubnet1RouteTableAssociationC330D45C": {
+   "Type": "AWS::EC2::SubnetRouteTableAssociation",
+   "Properties": {
+    "RouteTableId": {
+     "Ref": "FinancialPipelineVpcPublicSubnetSubnet1RouteTableD8FFF062"
+    },
+    "SubnetId": {
+     "Ref": "FinancialPipelineVpcPublicSubnetSubnet1Subnet2DC5B41A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet1/RouteTableAssociation"
+   }
+  },
+  "FinancialPipelineVpcPublicSubnetSubnet1DefaultRoute21B26A71": {
+   "Type": "AWS::EC2::Route",
+   "Properties": {
+    "DestinationCidrBlock": "0.0.0.0/0",
+    "GatewayId": {
+     "Ref": "FinancialPipelineVpcIGW29F35529"
+    },
+    "RouteTableId": {
+     "Ref": "FinancialPipelineVpcPublicSubnetSubnet1RouteTableD8FFF062"
+    }
+   },
+   "DependsOn": [
+    "FinancialPipelineVpcVPCGW713E05A1"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet1/DefaultRoute"
+   }
+  },
+  "FinancialPipelineVpcPublicSubnetSubnet1EIPE258BDD0": {
+   "Type": "AWS::EC2::EIP",
+   "Properties": {
+    "Domain": "vpc",
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet1"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet1/EIP"
+   }
+  },
+  "FinancialPipelineVpcPublicSubnetSubnet1NATGatewayCD3CE7FC": {
+   "Type": "AWS::EC2::NatGateway",
+   "Properties": {
+    "AllocationId": {
+     "Fn::GetAtt": [
+      "FinancialPipelineVpcPublicSubnetSubnet1EIPE258BDD0",
+      "AllocationId"
+     ]
+    },
+    "SubnetId": {
+     "Ref": "FinancialPipelineVpcPublicSubnetSubnet1Subnet2DC5B41A"
+    },
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet1"
+     }
+    ]
+   },
+   "DependsOn": [
+    "FinancialPipelineVpcPublicSubnetSubnet1DefaultRoute21B26A71",
+    "FinancialPipelineVpcPublicSubnetSubnet1RouteTableAssociationC330D45C"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet1/NATGateway"
+   }
+  },
+  "FinancialPipelineVpcPublicSubnetSubnet2SubnetACBCBCAC": {
+   "Type": "AWS::EC2::Subnet",
+   "Properties": {
+    "AvailabilityZone": "eu-west-1b",
+    "CidrBlock": "10.0.1.0/24",
+    "MapPublicIpOnLaunch": true,
+    "Tags": [
+     {
+      "Key": "aws-cdk:subnet-name",
+      "Value": "PublicSubnet"
+     },
+     {
+      "Key": "aws-cdk:subnet-type",
+      "Value": "Public"
+     },
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet2"
+     }
+    ],
+    "VpcId": {
+     "Ref": "FinancialPipelineVpc85BF59ED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet2/Subnet"
+   }
+  },
+  "FinancialPipelineVpcPublicSubnetSubnet2RouteTableDE752AFF": {
+   "Type": "AWS::EC2::RouteTable",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet2"
+     }
+    ],
+    "VpcId": {
+     "Ref": "FinancialPipelineVpc85BF59ED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet2/RouteTable"
+   }
+  },
+  "FinancialPipelineVpcPublicSubnetSubnet2RouteTableAssociation4312146D": {
+   "Type": "AWS::EC2::SubnetRouteTableAssociation",
+   "Properties": {
+    "RouteTableId": {
+     "Ref": "FinancialPipelineVpcPublicSubnetSubnet2RouteTableDE752AFF"
+    },
+    "SubnetId": {
+     "Ref": "FinancialPipelineVpcPublicSubnetSubnet2SubnetACBCBCAC"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet2/RouteTableAssociation"
+   }
+  },
+  "FinancialPipelineVpcPublicSubnetSubnet2DefaultRoute94DA04CB": {
+   "Type": "AWS::EC2::Route",
+   "Properties": {
+    "DestinationCidrBlock": "0.0.0.0/0",
+    "GatewayId": {
+     "Ref": "FinancialPipelineVpcIGW29F35529"
+    },
+    "RouteTableId": {
+     "Ref": "FinancialPipelineVpcPublicSubnetSubnet2RouteTableDE752AFF"
+    }
+   },
+   "DependsOn": [
+    "FinancialPipelineVpcVPCGW713E05A1"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet2/DefaultRoute"
+   }
+  },
+  "FinancialPipelineVpcPublicSubnetSubnet2EIPE0F39D7F": {
+   "Type": "AWS::EC2::EIP",
+   "Properties": {
+    "Domain": "vpc",
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet2"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet2/EIP"
+   }
+  },
+  "FinancialPipelineVpcPublicSubnetSubnet2NATGateway1CA56552": {
+   "Type": "AWS::EC2::NatGateway",
+   "Properties": {
+    "AllocationId": {
+     "Fn::GetAtt": [
+      "FinancialPipelineVpcPublicSubnetSubnet2EIPE0F39D7F",
+      "AllocationId"
+     ]
+    },
+    "SubnetId": {
+     "Ref": "FinancialPipelineVpcPublicSubnetSubnet2SubnetACBCBCAC"
+    },
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet2"
+     }
+    ]
+   },
+   "DependsOn": [
+    "FinancialPipelineVpcPublicSubnetSubnet2DefaultRoute94DA04CB",
+    "FinancialPipelineVpcPublicSubnetSubnet2RouteTableAssociation4312146D"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PublicSubnetSubnet2/NATGateway"
+   }
+  },
+  "FinancialPipelineVpcPrivateSubnetSubnet1Subnet4353DBCE": {
+   "Type": "AWS::EC2::Subnet",
+   "Properties": {
+    "AvailabilityZone": "eu-west-1a",
+    "CidrBlock": "10.0.2.0/24",
+    "MapPublicIpOnLaunch": false,
+    "Tags": [
+     {
+      "Key": "aws-cdk:subnet-name",
+      "Value": "PrivateSubnet"
+     },
+     {
+      "Key": "aws-cdk:subnet-type",
+      "Value": "Private"
+     },
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/PrivateSubnetSubnet1"
+     }
+    ],
+    "VpcId": {
+     "Ref": "FinancialPipelineVpc85BF59ED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PrivateSubnetSubnet1/Subnet"
+   }
+  },
+  "FinancialPipelineVpcPrivateSubnetSubnet1RouteTable668C2981": {
+   "Type": "AWS::EC2::RouteTable",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/PrivateSubnetSubnet1"
+     }
+    ],
+    "VpcId": {
+     "Ref": "FinancialPipelineVpc85BF59ED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PrivateSubnetSubnet1/RouteTable"
+   }
+  },
+  "FinancialPipelineVpcPrivateSubnetSubnet1RouteTableAssociationC7096FF3": {
+   "Type": "AWS::EC2::SubnetRouteTableAssociation",
+   "Properties": {
+    "RouteTableId": {
+     "Ref": "FinancialPipelineVpcPrivateSubnetSubnet1RouteTable668C2981"
+    },
+    "SubnetId": {
+     "Ref": "FinancialPipelineVpcPrivateSubnetSubnet1Subnet4353DBCE"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PrivateSubnetSubnet1/RouteTableAssociation"
+   }
+  },
+  "FinancialPipelineVpcPrivateSubnetSubnet1DefaultRouteB8773BCC": {
+   "Type": "AWS::EC2::Route",
+   "Properties": {
+    "DestinationCidrBlock": "0.0.0.0/0",
+    "NatGatewayId": {
+     "Ref": "FinancialPipelineVpcPublicSubnetSubnet1NATGatewayCD3CE7FC"
+    },
+    "RouteTableId": {
+     "Ref": "FinancialPipelineVpcPrivateSubnetSubnet1RouteTable668C2981"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PrivateSubnetSubnet1/DefaultRoute"
+   }
+  },
+  "FinancialPipelineVpcPrivateSubnetSubnet2Subnet8816EE88": {
+   "Type": "AWS::EC2::Subnet",
+   "Properties": {
+    "AvailabilityZone": "eu-west-1b",
+    "CidrBlock": "10.0.3.0/24",
+    "MapPublicIpOnLaunch": false,
+    "Tags": [
+     {
+      "Key": "aws-cdk:subnet-name",
+      "Value": "PrivateSubnet"
+     },
+     {
+      "Key": "aws-cdk:subnet-type",
+      "Value": "Private"
+     },
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/PrivateSubnetSubnet2"
+     }
+    ],
+    "VpcId": {
+     "Ref": "FinancialPipelineVpc85BF59ED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PrivateSubnetSubnet2/Subnet"
+   }
+  },
+  "FinancialPipelineVpcPrivateSubnetSubnet2RouteTableBD8FA889": {
+   "Type": "AWS::EC2::RouteTable",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/PrivateSubnetSubnet2"
+     }
+    ],
+    "VpcId": {
+     "Ref": "FinancialPipelineVpc85BF59ED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PrivateSubnetSubnet2/RouteTable"
+   }
+  },
+  "FinancialPipelineVpcPrivateSubnetSubnet2RouteTableAssociation9E390380": {
+   "Type": "AWS::EC2::SubnetRouteTableAssociation",
+   "Properties": {
+    "RouteTableId": {
+     "Ref": "FinancialPipelineVpcPrivateSubnetSubnet2RouteTableBD8FA889"
+    },
+    "SubnetId": {
+     "Ref": "FinancialPipelineVpcPrivateSubnetSubnet2Subnet8816EE88"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PrivateSubnetSubnet2/RouteTableAssociation"
+   }
+  },
+  "FinancialPipelineVpcPrivateSubnetSubnet2DefaultRouteBE6230A4": {
+   "Type": "AWS::EC2::Route",
+   "Properties": {
+    "DestinationCidrBlock": "0.0.0.0/0",
+    "NatGatewayId": {
+     "Ref": "FinancialPipelineVpcPublicSubnetSubnet2NATGateway1CA56552"
+    },
+    "RouteTableId": {
+     "Ref": "FinancialPipelineVpcPrivateSubnetSubnet2RouteTableBD8FA889"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/PrivateSubnetSubnet2/DefaultRoute"
+   }
+  },
+  "FinancialPipelineVpcDatabaseSubnetSubnet1SubnetBB3CBBA2": {
+   "Type": "AWS::EC2::Subnet",
+   "Properties": {
+    "AvailabilityZone": "eu-west-1a",
+    "CidrBlock": "10.0.4.0/24",
+    "MapPublicIpOnLaunch": false,
+    "Tags": [
+     {
+      "Key": "aws-cdk:subnet-name",
+      "Value": "DatabaseSubnet"
+     },
+     {
+      "Key": "aws-cdk:subnet-type",
+      "Value": "Isolated"
+     },
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/DatabaseSubnetSubnet1"
+     }
+    ],
+    "VpcId": {
+     "Ref": "FinancialPipelineVpc85BF59ED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/DatabaseSubnetSubnet1/Subnet"
+   }
+  },
+  "FinancialPipelineVpcDatabaseSubnetSubnet1RouteTable83404C82": {
+   "Type": "AWS::EC2::RouteTable",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/DatabaseSubnetSubnet1"
+     }
+    ],
+    "VpcId": {
+     "Ref": "FinancialPipelineVpc85BF59ED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/DatabaseSubnetSubnet1/RouteTable"
+   }
+  },
+  "FinancialPipelineVpcDatabaseSubnetSubnet1RouteTableAssociation32EC1870": {
+   "Type": "AWS::EC2::SubnetRouteTableAssociation",
+   "Properties": {
+    "RouteTableId": {
+     "Ref": "FinancialPipelineVpcDatabaseSubnetSubnet1RouteTable83404C82"
+    },
+    "SubnetId": {
+     "Ref": "FinancialPipelineVpcDatabaseSubnetSubnet1SubnetBB3CBBA2"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/DatabaseSubnetSubnet1/RouteTableAssociation"
+   }
+  },
+  "FinancialPipelineVpcDatabaseSubnetSubnet2Subnet1E4919DA": {
+   "Type": "AWS::EC2::Subnet",
+   "Properties": {
+    "AvailabilityZone": "eu-west-1b",
+    "CidrBlock": "10.0.5.0/24",
+    "MapPublicIpOnLaunch": false,
+    "Tags": [
+     {
+      "Key": "aws-cdk:subnet-name",
+      "Value": "DatabaseSubnet"
+     },
+     {
+      "Key": "aws-cdk:subnet-type",
+      "Value": "Isolated"
+     },
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/DatabaseSubnetSubnet2"
+     }
+    ],
+    "VpcId": {
+     "Ref": "FinancialPipelineVpc85BF59ED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/DatabaseSubnetSubnet2/Subnet"
+   }
+  },
+  "FinancialPipelineVpcDatabaseSubnetSubnet2RouteTable2727FA84": {
+   "Type": "AWS::EC2::RouteTable",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/DatabaseSubnetSubnet2"
+     }
+    ],
+    "VpcId": {
+     "Ref": "FinancialPipelineVpc85BF59ED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/DatabaseSubnetSubnet2/RouteTable"
+   }
+  },
+  "FinancialPipelineVpcDatabaseSubnetSubnet2RouteTableAssociationB5FCF236": {
+   "Type": "AWS::EC2::SubnetRouteTableAssociation",
+   "Properties": {
+    "RouteTableId": {
+     "Ref": "FinancialPipelineVpcDatabaseSubnetSubnet2RouteTable2727FA84"
+    },
+    "SubnetId": {
+     "Ref": "FinancialPipelineVpcDatabaseSubnetSubnet2Subnet1E4919DA"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/DatabaseSubnetSubnet2/RouteTableAssociation"
+   }
+  },
+  "FinancialPipelineVpcIGW29F35529": {
+   "Type": "AWS::EC2::InternetGateway",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc-vpc"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/IGW"
+   }
+  },
+  "FinancialPipelineVpcVPCGW713E05A1": {
+   "Type": "AWS::EC2::VPCGatewayAttachment",
+   "Properties": {
+    "InternetGatewayId": {
+     "Ref": "FinancialPipelineVpcIGW29F35529"
+    },
+    "VpcId": {
+     "Ref": "FinancialPipelineVpc85BF59ED"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/VPCGW"
+   }
+  },
+  "FinancialPipelineVpcFlowLogIAMRole2593456D": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "vpc-flow-logs.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/FlowLog"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/FlowLog/IAMRole/Resource"
+   }
+  },
+  "FinancialPipelineVpcFlowLogIAMRoleDefaultPolicy9469F23B": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:DescribeLogStreams",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "FinancialPipelineVpcFlowLogLogGroup9E1E3542",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": "iam:PassRole",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "FinancialPipelineVpcFlowLogIAMRole2593456D",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "FinancialPipelineVpcFlowLogIAMRoleDefaultPolicy9469F23B",
+    "Roles": [
+     {
+      "Ref": "FinancialPipelineVpcFlowLogIAMRole2593456D"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/FlowLog/IAMRole/DefaultPolicy/Resource"
+   }
+  },
+  "FinancialPipelineVpcFlowLogLogGroup9E1E3542": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "RetentionInDays": 731,
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/FlowLog"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/FlowLog/LogGroup/Resource"
+   }
+  },
+  "FinancialPipelineVpcFlowLog5E6AE41A": {
+   "Type": "AWS::EC2::FlowLog",
+   "Properties": {
+    "DeliverLogsPermissionArn": {
+     "Fn::GetAtt": [
+      "FinancialPipelineVpcFlowLogIAMRole2593456D",
+      "Arn"
+     ]
+    },
+    "LogDestinationType": "cloud-watch-logs",
+    "LogGroupName": {
+     "Ref": "FinancialPipelineVpcFlowLogLogGroup9E1E3542"
+    },
+    "ResourceId": {
+     "Ref": "FinancialPipelineVpc85BF59ED"
+    },
+    "ResourceType": "VPC",
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "financial-pipeline-development-vpc/FinancialPipelineVpc/FlowLog"
+     }
+    ],
+    "TrafficType": "ALL"
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/FinancialPipelineVpc/FlowLog/FlowLog"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/0WO0Y7CIBBFv8V3irb9AmN2jYnZJdX4aijLKitlGhi2MYR/F1q1T/fMnTuTW9GqLOlqwQdXiJ9boVVLwwG5uJFknYMUFQ2nXpDNrzmxDWG+1UocfGskZm+mBjzKI2+1nP3ZWzsHQnFUYN7hDB87luWL45ajHPidMKv+E86PdwalTfwKTE2e0xpT12snDZJPDcMeLnn/xEgU72hoYOo0KoPUf3wyUSQaLo6GFN9a8H3evDhG0kgH3orx/ttj7zESdscrmGVNy5rWiz+nVGG9QdVJ2kz6ADOem3FWAQAA"
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-vpc/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "VpcId": {
+   "Description": "VPC ID",
+   "Value": {
+    "Ref": "FinancialPipelineVpc85BF59ED"
+   }
+  },
+  "VpcCidr": {
+   "Description": "VPC CIDR Block",
+   "Value": {
+    "Fn::GetAtt": [
+     "FinancialPipelineVpc85BF59ED",
+     "CidrBlock"
+    ]
+   }
+  },
+  "ExportsOutputRefFinancialPipelineVpcDatabaseSubnetSubnet1SubnetBB3CBBA2F6700849": {
+   "Value": {
+    "Ref": "FinancialPipelineVpcDatabaseSubnetSubnet1SubnetBB3CBBA2"
+   },
+   "Export": {
+    "Name": "financial-pipeline-development-vpc:ExportsOutputRefFinancialPipelineVpcDatabaseSubnetSubnet1SubnetBB3CBBA2F6700849"
+   }
+  },
+  "ExportsOutputRefFinancialPipelineVpcDatabaseSubnetSubnet2Subnet1E4919DA537C2442": {
+   "Value": {
+    "Ref": "FinancialPipelineVpcDatabaseSubnetSubnet2Subnet1E4919DA"
+   },
+   "Export": {
+    "Name": "financial-pipeline-development-vpc:ExportsOutputRefFinancialPipelineVpcDatabaseSubnetSubnet2Subnet1E4919DA537C2442"
+   }
+  },
+  "ExportsOutputFnGetAttFinancialPipelineVpc85BF59EDCidrBlockD55A07BA": {
+   "Value": {
+    "Fn::GetAtt": [
+     "FinancialPipelineVpc85BF59ED",
+     "CidrBlock"
+    ]
+   },
+   "Export": {
+    "Name": "financial-pipeline-development-vpc:ExportsOutputFnGetAttFinancialPipelineVpc85BF59EDCidrBlockD55A07BA"
+   }
+  },
+  "ExportsOutputRefFinancialPipelineVpc85BF59ED683DB6F8": {
+   "Value": {
+    "Ref": "FinancialPipelineVpc85BF59ED"
+   },
+   "Export": {
+    "Name": "financial-pipeline-development-vpc:ExportsOutputRefFinancialPipelineVpc85BF59ED683DB6F8"
+   }
+  },
+  "ExportsOutputRefFinancialPipelineVpcPublicSubnetSubnet1Subnet2DC5B41AD9577D87": {
+   "Value": {
+    "Ref": "FinancialPipelineVpcPublicSubnetSubnet1Subnet2DC5B41A"
+   },
+   "Export": {
+    "Name": "financial-pipeline-development-vpc:ExportsOutputRefFinancialPipelineVpcPublicSubnetSubnet1Subnet2DC5B41AD9577D87"
+   }
+  },
+  "ExportsOutputRefFinancialPipelineVpcPublicSubnetSubnet2SubnetACBCBCAC46C4E004": {
+   "Value": {
+    "Ref": "FinancialPipelineVpcPublicSubnetSubnet2SubnetACBCBCAC"
+   },
+   "Export": {
+    "Name": "financial-pipeline-development-vpc:ExportsOutputRefFinancialPipelineVpcPublicSubnetSubnet2SubnetACBCBCAC46C4E004"
+   }
+  },
+  "ExportsOutputRefFinancialPipelineVpcPrivateSubnetSubnet1Subnet4353DBCE8B9E05F6": {
+   "Value": {
+    "Ref": "FinancialPipelineVpcPrivateSubnetSubnet1Subnet4353DBCE"
+   },
+   "Export": {
+    "Name": "financial-pipeline-development-vpc:ExportsOutputRefFinancialPipelineVpcPrivateSubnetSubnet1Subnet4353DBCE8B9E05F6"
+   }
+  },
+  "ExportsOutputRefFinancialPipelineVpcPrivateSubnetSubnet2Subnet8816EE88200C719A": {
+   "Value": {
+    "Ref": "FinancialPipelineVpcPrivateSubnetSubnet2Subnet8816EE88"
+   },
+   "Export": {
+    "Name": "financial-pipeline-development-vpc:ExportsOutputRefFinancialPipelineVpcPrivateSubnetSubnet2Subnet8816EE88200C719A"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

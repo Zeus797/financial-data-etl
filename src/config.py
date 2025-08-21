@@ -5,8 +5,10 @@ DATABASE = {
     'host': 'localhost',
     'port': 5432,
     'username': 'postgres',
-    'password': 'your_password',
-    'database': 'your_database'
+    'password': 'postgres123',
+    'database': 'postgres'
 }
 
 DATABASE_URL = URL.create(**DATABASE)
+
+

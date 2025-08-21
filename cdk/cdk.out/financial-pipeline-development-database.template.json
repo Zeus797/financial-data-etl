@@ -1,0 +1,275 @@
+{
+ "Resources": {
+  "DatabaseSecret86DBB7B3": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Database credentials for financial-pipeline-development-database",
+    "GenerateSecretString": {
+     "ExcludeCharacters": " %+~`#$&*()|[]{}:;<>?!'/@\"\\",
+     "GenerateStringKey": "password",
+     "PasswordLength": 32,
+     "SecretStringTemplate": "{\"username\": \"pipeline_admin\"}"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-database/DatabaseSecret/Resource"
+   }
+  },
+  "DatabaseSecretAttachment9A63A3D4": {
+   "Type": "AWS::SecretsManager::SecretTargetAttachment",
+   "Properties": {
+    "SecretId": {
+     "Ref": "DatabaseSecret86DBB7B3"
+    },
+    "TargetId": {
+     "Ref": "DatabaseB269D8BB"
+    },
+    "TargetType": "AWS::RDS::DBInstance"
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-database/DatabaseSecret/Attachment/Resource"
+   }
+  },
+  "DatabaseSubnetGroup": {
+   "Type": "AWS::RDS::DBSubnetGroup",
+   "Properties": {
+    "DBSubnetGroupDescription": "Subnet group for Financial Pipeline database",
+    "SubnetIds": [
+     {
+      "Fn::ImportValue": "financial-pipeline-development-vpc:ExportsOutputRefFinancialPipelineVpcDatabaseSubnetSubnet1SubnetBB3CBBA2F6700849"
+     },
+     {
+      "Fn::ImportValue": "financial-pipeline-development-vpc:ExportsOutputRefFinancialPipelineVpcDatabaseSubnetSubnet2Subnet1E4919DA537C2442"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-database/DatabaseSubnetGroup/Default"
+   }
+  },
+  "DatabaseSecurityGroup7319C0F6": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Security group for Financial Pipeline database",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "255.255.255.255/32",
+      "Description": "Disallow all traffic",
+      "FromPort": 252,
+      "IpProtocol": "icmp",
+      "ToPort": 86
+     }
+    ],
+    "SecurityGroupIngress": [
+     {
+      "CidrIp": {
+       "Fn::ImportValue": "financial-pipeline-development-vpc:ExportsOutputFnGetAttFinancialPipelineVpc85BF59EDCidrBlockD55A07BA"
+      },
+      "Description": "Allow connections from VPC",
+      "FromPort": 5432,
+      "IpProtocol": "tcp",
+      "ToPort": 5432
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "financial-pipeline-development-vpc:ExportsOutputRefFinancialPipelineVpc85BF59ED683DB6F8"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-database/DatabaseSecurityGroup/Resource"
+   }
+  },
+  "DatabaseParameterGroupC9757D64": {
+   "Type": "AWS::RDS::DBParameterGroup",
+   "Properties": {
+    "Description": "Parameter group for postgres15",
+    "Family": "postgres15",
+    "Parameters": {
+     "shared_preload_libraries": "pg_stat_statements",
+     "log_statement": "all",
+     "log_min_duration_statement": "1000",
+     "max_connections": "200"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-database/DatabaseParameterGroup/Resource"
+   }
+  },
+  "DatabaseMonitoringRole576991DA": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "monitoring.rds.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-database/Database/MonitoringRole/Resource"
+   }
+  },
+  "DatabaseB269D8BB": {
+   "Type": "AWS::RDS::DBInstance",
+   "Properties": {
+    "AllocatedStorage": "20",
+    "BackupRetentionPeriod": 7,
+    "CopyTagsToSnapshot": true,
+    "DBInstanceClass": "db.t3.micro",
+    "DBInstanceIdentifier": "financial-pipeline-development-database-postgres",
+    "DBName": "financial_pipeline",
+    "DBParameterGroupName": {
+     "Ref": "DatabaseParameterGroupC9757D64"
+    },
+    "DBSubnetGroupName": {
+     "Ref": "DatabaseSubnetGroup"
+    },
+    "DeletionProtection": false,
+    "EnablePerformanceInsights": true,
+    "Engine": "postgres",
+    "EngineVersion": "15.13",
+    "MasterUserPassword": {
+     "Fn::Join": [
+      "",
+      [
+       "{{resolve:secretsmanager:",
+       {
+        "Ref": "DatabaseSecret86DBB7B3"
+       },
+       ":SecretString:password::}}"
+      ]
+     ]
+    },
+    "MasterUsername": {
+     "Fn::Join": [
+      "",
+      [
+       "{{resolve:secretsmanager:",
+       {
+        "Ref": "DatabaseSecret86DBB7B3"
+       },
+       ":SecretString:username::}}"
+      ]
+     ]
+    },
+    "MaxAllocatedStorage": 50,
+    "MonitoringInterval": 60,
+    "MonitoringRoleArn": {
+     "Fn::GetAtt": [
+      "DatabaseMonitoringRole576991DA",
+      "Arn"
+     ]
+    },
+    "MultiAZ": false,
+    "PerformanceInsightsRetentionPeriod": 7,
+    "PreferredBackupWindow": "03:00-04:00",
+    "PreferredMaintenanceWindow": "sun:04:00-sun:05:00",
+    "StorageEncrypted": true,
+    "StorageType": "gp3",
+    "VPCSecurityGroups": [
+     {
+      "Fn::GetAtt": [
+       "DatabaseSecurityGroup7319C0F6",
+       "GroupId"
+      ]
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-database/Database/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/11OSw6CMBA9i/tSBU7gJzGuNOjeDGXUii1mOo0xpHe3gBp09WbeLy+TWZrK2QQeLlFVndx0Kds9g6pFpI6tQ0XIzoCFM1KU+l8sT/Z9DXAAOiPPOQYvBu3I8K8EQZWLPb60yGtq/L3zrhZjYgcEBhlppP9xK2AoweHGOgarcDB9viBQZf1YT5qf35ofIggNRrZFc+vTHYYgCnSNp6Fw6/nu4+Ldky+NneYyzWU+uTqtE/KWtUFZDPgCYRIJEUcBAAA="
+   },
+   "Metadata": {
+    "aws:cdk:path": "financial-pipeline-development-database/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "DatabaseEndpoint": {
+   "Description": "Database endpoint",
+   "Value": {
+    "Fn::GetAtt": [
+     "DatabaseB269D8BB",
+     "Endpoint.Address"
+    ]
+   }
+  },
+  "DatabaseSecretArn": {
+   "Description": "Database credentials secret ARN",
+   "Value": {
+    "Ref": "DatabaseSecret86DBB7B3"
+   }
+  },
+  "ExportsOutputRefDatabaseSecretAttachment9A63A3D478416D8E": {
+   "Value": {
+    "Ref": "DatabaseSecretAttachment9A63A3D4"
+   },
+   "Export": {
+    "Name": "financial-pipeline-development-database:ExportsOutputRefDatabaseSecretAttachment9A63A3D478416D8E"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

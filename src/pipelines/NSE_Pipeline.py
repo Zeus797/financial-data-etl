@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-NSE Treasury Securities Pipeline
-Complete pipeline for downloading, processing, and storing Kenya treasury bond data
+NSE Treasury Securities Pipeline - Fixed with GET requests
+The key fix: Use GET instead of HEAD for URL checking
 """
 
 import os
@@ -9,6 +9,7 @@ import sys
 import asyncio
 import logging
 import pandas as pd
+import numpy as np
 import requests
 import aiohttp
 import pdfplumber
@@ -19,7 +20,13 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 import json
 import time
-
+from PIL import Image
+import pytesseract
+from pdf2image import convert_from_path  # pip install pdf2image
+from paddleocr import PaddleOCR
+from transformers import DonutProcessor, VisionEncoderDecoderModel
+from PIL import Image
+ 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -30,6 +37,14 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Initialize PaddleOCR with proper error handling
+try:
+    ocr_engine = PaddleOCR(use_textline_orientation=True, lang='en')
+    logger.info("PaddleOCR initialized successfully")
+except Exception as e:
+    logger.warning(f"PaddleOCR initialization failed: {e}")
+    ocr_engine = None
 
 @dataclass
 class BondData:
@@ -58,7 +73,7 @@ class BondData:
             self.price_premium = ((self.current_price - 100) / 100) * 100
 
 class NSEBondProcessor:
-    """NSE Bond PDF processor"""
+    """NSE Bond PDF processor - FIXED VERSION"""
     
     def __init__(self):
         self.base_url = "https://www.nse.co.ke/wp-content/uploads/"
@@ -73,63 +88,117 @@ class NSEBondProcessor:
             r'(\d{1,2}\s+[A-Za-z]+\s+\d{4})'
         ]
     
-    async def get_latest_pdf_url(self, target_date: Optional[str] = None) -> Optional[str]:
-        """Get URL for latest bond prices PDF"""
-        if target_date is None:
-            target_date = datetime.now().strftime("%d-%b-%Y").upper()
+    async def find_available_pdf(self, start_date: Optional[str] = None) -> Optional[str]:
+        """FIXED: Enhanced method using GET instead of HEAD requests"""
         
-        # Try different filename formats
-        filename_formats = [
-            f"BondPrices_{target_date}.pdf",
-            f"BondPrices_{target_date.replace('-', '')}.pdf",
-            f"bond_prices_{target_date.lower()}.pdf"
-        ]
-        
-        for filename in filename_formats:
-            url = f"{self.base_url}{filename}"
+        if start_date:
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.head(url) as response:
-                        if response.status == 200:
-                            logger.info(f"Found PDF: {url}")
-                            return url
-            except Exception as e:
-                logger.debug(f"Failed to check {url}: {e}")
+                # Try parsing different date formats
+                if '-' in start_date and len(start_date.split('-')) == 3:
+                    if start_date.count('-') == 2 and len(start_date.split('-')[0]) <= 2:
+                        # DD-MMM-YYYY format
+                        search_date = datetime.strptime(start_date, "%d-%b-%Y")
+                    else:
+                        # YYYY-MM-DD format
+                        search_date = datetime.strptime(start_date, "%Y-%m-%d")
+                else:
+                    search_date = datetime.strptime(start_date, "%d-%b-%Y")
+            except ValueError:
+                logger.warning(f"Invalid date format: {start_date}, using today")
+                search_date = datetime.now()
+        else:
+            search_date = datetime.now()
         
-        # Try yesterday's file
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%d-%b-%Y").upper()
-        for filename in filename_formats:
-            filename = filename.replace(target_date, yesterday)
-            url = f"{self.base_url}{filename}"
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.head(url) as response:
-                        if response.status == 200:
-                            logger.info(f"Found yesterday's PDF: {url}")
-                            return url
-            except Exception:
+        logger.info(f"Searching for PDFs starting from: {search_date.strftime('%d-%b-%Y')}")
+        
+        # Try multiple date formats and go back up to 15 business days
+        for days_back in range(20):  # Try 20 days back to be thorough
+            test_date = search_date - timedelta(days=days_back)
+            
+            # Skip weekends for business data
+            if test_date.weekday() >= 5:  # Saturday = 5, Sunday = 6
+                logger.debug(f"Skipping weekend: {test_date.strftime('%d-%b-%Y')}")
                 continue
+            
+            date_str = test_date.strftime("%d-%b-%Y").upper()
+            logger.info(f"Checking for PDF on: {date_str}")
+            
+            # Try different filename formats
+            filename_formats = [
+                f"BondPrices_{date_str}.pdf",
+                f"BondPrices_{date_str.replace('-', '')}.pdf",
+                f"bond_prices_{date_str.lower()}.pdf",
+                f"BondPrices-{date_str}.pdf",
+                f"NSE_BondPrices_{date_str}.pdf",
+                f"Treasury_BondPrices_{date_str}.pdf"
+            ]
+            
+            logger.debug(f"Testing formats: {filename_formats}")
+            
+            for filename in filename_formats:
+                url = f"{self.base_url}{filename}"
+                logger.debug(f"Testing URL: {url}")
+                
+                try:
+                    # KEY FIX: Use GET instead of HEAD - only read first few bytes
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, timeout=15) as response:
+                            if response.status == 200:
+                                # Check if it's actually a PDF by reading just a bit
+                                content_start = await response.content.read(1024)  # Read first 1KB
+                                if content_start.startswith(b'%PDF'):
+                                    logger.info(f"✓ Found valid PDF for {date_str}: {url}")
+                                    return url
+                                else:
+                                    logger.debug(f"Not a PDF file: {url}")
+                            else:
+                                logger.debug(f"HTTP {response.status} for {url}")
+                except Exception as e:
+                    logger.debug(f"Error checking {url}: {e}")
+                    continue
+            
+            logger.debug(f"No PDF found for {date_str}")
         
-        logger.warning(f"No PDF found for {target_date}")
+        logger.error("No PDF files found in the last 20 days")
         return None
     
+    async def get_latest_pdf_url(self, target_date: Optional[str] = None) -> Optional[str]:
+        """Wrapper method for backward compatibility"""
+        return await self.find_available_pdf(target_date)
+    
     async def download_pdf(self, url: str) -> Optional[Path]:
-        """Download PDF from URL"""
+        """Download PDF from URL - ENHANCED VERSION"""
         try:
             filename = url.split('/')[-1]
             filepath = self.download_folder / filename
             
+            # Skip download if file already exists and is recent
+            if filepath.exists():
+                file_age = datetime.now().timestamp() - filepath.stat().st_mtime
+                if file_age < 3600:  # Less than 1 hour old
+                    logger.info(f"Using existing file: {filepath}")
+                    return filepath
+            
+            logger.info(f"Downloading: {url}")
+            
             async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
+                async with session.get(url, timeout=60) as response:  # Longer timeout
                     if response.status == 200:
                         content = await response.read()
+                        
+                        # Validate it's actually a PDF
+                        if not content.startswith(b'%PDF'):
+                            logger.error("Downloaded file is not a valid PDF")
+                            return None
+                        
                         with open(filepath, 'wb') as f:
                             f.write(content)
-                        logger.info(f"Downloaded: {filepath}")
+                        
+                        logger.info(f"Downloaded: {filepath} ({len(content)} bytes)")
                         return filepath
-            
-            logger.error(f"Failed to download: HTTP {response.status}")
-            return None
+                    else:
+                        logger.error(f"Failed to download: HTTP {response.status}")
+                        return None
             
         except Exception as e:
             logger.error(f"Download error: {e}")
@@ -158,28 +227,110 @@ class NSEBondProcessor:
             return float(clean_value) if clean_value else 0.0
         except (ValueError, TypeError):
             return 0.0
+        
+    def ocr_extract_text(self, filepath: Path) -> str:
+        """Extract text from image-based PDF using Tesseract OCR"""
+        try:
+            pages = convert_from_path(str(filepath), dpi=300)
+            full_text = ""
+
+            for i, page in enumerate(pages):
+                gray = page.convert('L')
+                bw = gray.point(lambda x: 0 if x < 200 else 255, '1')
+                text = pytesseract.image_to_string(bw, config="--psm 6")
+                full_text += text + "\n"
+                logger.info(f"Tesseract extracted {len(text)} chars from page {i+1}")
+            
+            return full_text
+        except Exception as e:
+            logger.error(f"Tesseract OCR failed: {e}")
+            return ""
+    
+    def extract_with_paddleocr(self, filepath: Path) -> str:
+        """Extract text using PaddleOCR with enhanced error handling"""
+        if ocr_engine is None:
+            logger.error("PaddleOCR not available")
+            return ""
+            
+        try:
+            images = convert_from_path(str(filepath), dpi=300)
+            full_text = ""
+            
+            for page_num, img in enumerate(images):
+                logger.info(f"Processing page {page_num + 1} with PaddleOCR...")
+                result = ocr_engine.predict(np.array(img))
+                
+                page_text = ""
+                if result and result[0]:
+                    for line in result[0]:
+                        if len(line) >= 2 and line[1] and len(line[1]) >= 1:
+                            text = line[1][0]
+                            confidence = line[1][1] if len(line[1]) >= 2 else 0.0
+                            
+                            # Include text with reasonable confidence
+                            if confidence > 0.3:
+                                page_text += text + "\n"
+                
+                full_text += f"=== PAGE {page_num + 1} ===\n{page_text}\n"
+                logger.info(f"PaddleOCR extracted {len(page_text)} chars from page {page_num + 1}")
+            
+            return full_text
+        except Exception as e:
+            logger.error(f"PaddleOCR extraction failed: {e}")
+            return ""
     
     def parse_pdf(self, filepath: Path) -> List[BondData]:
-        """Extract bond data from PDF"""
+        """Extract bond data from PDF with multiple OCR fallbacks"""
         bonds = []
         
         try:
+            logger.info(f"Parsing PDF: {filepath}")
+            
+            # Method 1: Try pdfplumber first
             with pdfplumber.open(filepath) as pdf:
                 full_text = ""
-                
-                # Extract text from all pages
+
                 for page in pdf.pages:
                     page_text = page.extract_text()
                     if page_text:
                         full_text += page_text + "\n"
+            
+            logger.info(f"pdfplumber extracted {len(full_text)} characters")
+            
+            # Method 2: If pdfplumber fails or gets poor results, try PaddleOCR
+            if len(full_text.strip()) < 100:
+                logger.warning("pdfplumber extraction poor, trying PaddleOCR...")
+                full_text = self.extract_with_paddleocr(filepath)
                 
-                # Extract date from filename or content
-                pdf_date = self.extract_date_from_content(filepath.name, full_text)
-                
-                # Parse bonds from text
-                bonds = self.parse_bonds_from_text(full_text, pdf_date)
-                
-            logger.info(f"Extracted {len(bonds)} bonds from PDF")
+                # Method 3: If PaddleOCR also fails, try Tesseract as final fallback
+                if len(full_text.strip()) < 100:
+                    logger.warning("PaddleOCR also poor, trying Tesseract OCR...")
+                    full_text = self.ocr_extract_text(filepath)
+            
+            # Save extracted text for debugging
+            debug_file = f"extracted_text_{filepath.stem}.txt"
+            with open(debug_file, "w", encoding="utf-8") as f:
+                f.write(full_text)
+            logger.info(f"Saved extracted text to: {debug_file}")
+            
+            # Show sample of extracted text
+            logger.info("Sample extracted text (first 500 chars):")
+            logger.info("-" * 50)
+            logger.info(full_text[:500])
+            logger.info("-" * 50)
+            
+            if not full_text.strip():
+                logger.error("No text could be extracted from PDF using any method")
+                return []
+            
+            # Extract date from filename or content
+            pdf_date = self.extract_date_from_content(filepath.name, full_text)
+            logger.info(f"Extracted date: {pdf_date}")
+            
+            # Parse bonds from text
+            bonds = self.parse_bonds_from_text(full_text, pdf_date)
+            
+            logger.info(f"Successfully extracted {len(bonds)} bonds from PDF")
             return bonds
             
         except Exception as e:
@@ -203,13 +354,15 @@ class NSEBondProcessor:
         return datetime.now().strftime("%Y-%m-%d")
     
     def parse_bonds_from_text(self, text: str, pdf_date: str) -> List[BondData]:
-        """Parse bond data from PDF text"""
+        """Parse bond data from PDF text with enhanced detection"""
         bonds = []
         lines = text.split('\n')
         
+        logger.info(f"Parsing {len(lines)} lines of text...")
+        
         current_bond = {}
         
-        for line in lines:
+        for line_num, line in enumerate(lines):
             line = line.strip()
             if not line:
                 continue
@@ -218,33 +371,38 @@ class NSEBondProcessor:
             isin_match = re.search(self.isin_pattern, line)
             if isin_match:
                 # Save previous bond
-                if current_bond:
+                if current_bond and 'isin' in current_bond:
                     bond = self.create_bond_from_data(current_bond, pdf_date)
                     if bond:
                         bonds.append(bond)
+                        logger.info(f"Found bond: {bond.isin} - {bond.coupon_rate}% - {bond.current_price}")
                 
                 # Start new bond
                 current_bond = {'isin': isin_match.group()}
+                logger.info(f"Line {line_num}: Found ISIN {isin_match.group()}")
                 self.extract_data_from_line(line, current_bond)
             
             # Extract other data from current line
-            elif current_bond:
+            elif current_bond and 'isin' in current_bond:
                 self.extract_data_from_line(line, current_bond)
         
         # Don't forget last bond
-        if current_bond:
+        if current_bond and 'isin' in current_bond:
             bond = self.create_bond_from_data(current_bond, pdf_date)
             if bond:
                 bonds.append(bond)
+                logger.info(f"Found final bond: {bond.isin} - {bond.coupon_rate}% - {bond.current_price}")
         
+        logger.info(f"Total bonds parsed: {len(bonds)}")
         return bonds
     
     def extract_data_from_line(self, line: str, bond_data: Dict):
         """Extract bond data from a line of text"""
         # Look for issue numbers
         issue_match = re.search(r'FXD\d+/\d+/\d+', line)
-        if issue_match:
+        if issue_match and 'issue_number' not in bond_data:
             bond_data['issue_number'] = issue_match.group()
+            logger.debug(f"Found issue number: {issue_match.group()}")
         
         # Look for dates
         for pattern in self.date_patterns:
@@ -252,8 +410,10 @@ class NSEBondProcessor:
             if dates:
                 if 'issue_date' not in bond_data:
                     bond_data['issue_date'] = self.standardize_date(dates[0])
+                    logger.debug(f"Found issue date: {dates[0]}")
                 elif 'maturity_date' not in bond_data:
                     bond_data['maturity_date'] = self.standardize_date(dates[0])
+                    logger.debug(f"Found maturity date: {dates[0]}")
         
         # Look for percentages and numbers
         percentages = re.findall(r'(\d+\.?\d*)\s*%', line)
@@ -262,16 +422,19 @@ class NSEBondProcessor:
         # Assign percentages to appropriate fields
         for pct in percentages:
             value = self.safe_float(pct)
-            if 5 <= value <= 25 and 'coupon_rate' not in bond_data:
+            if 1 <= value <= 30 and 'coupon_rate' not in bond_data:
                 bond_data['coupon_rate'] = value
-            elif 5 <= value <= 25 and 'ytm' not in bond_data:
+                logger.debug(f"Found coupon rate: {value}%")
+            elif 1 <= value <= 30 and 'ytm' not in bond_data:
                 bond_data['ytm'] = value
+                logger.debug(f"Found YTM: {value}%")
         
         # Assign numbers to price if in reasonable range
         for num in numbers:
             value = self.safe_float(num)
-            if 80 <= value <= 120 and 'current_price' not in bond_data:
+            if 70 <= value <= 130 and 'current_price' not in bond_data:
                 bond_data['current_price'] = value
+                logger.debug(f"Found price: {value}")
     
     def create_bond_from_data(self, bond_dict: Dict, pdf_date: str) -> Optional[BondData]:
         """Create BondData object from extracted data"""
@@ -281,7 +444,7 @@ class NSEBondProcessor:
                 return None
             
             # Fill defaults
-            bond_dict.setdefault('issue_number', 'Unknown')
+            bond_dict.setdefault('issue_number', f"Unknown-{bond_dict['isin'][-4:]}")
             bond_dict.setdefault('issue_date', pdf_date)
             bond_dict.setdefault('maturity_date', pdf_date)
             bond_dict.setdefault('tenor', 'Unknown')
@@ -342,10 +505,12 @@ class NSEBondProcessor:
         return pd.DataFrame(data)
     
     async def process_latest_bonds(self, target_date: Optional[str] = None) -> pd.DataFrame:
-        """Complete workflow: download, parse, return bond data"""
+        """Complete workflow: find, download, parse, return bond data"""
         try:
-            # Get PDF URL
-            pdf_url = await self.get_latest_pdf_url(target_date)
+            logger.info("Starting bond processing workflow...")
+            
+            # Use enhanced PDF search with GET requests
+            pdf_url = await self.find_available_pdf(target_date)
             if not pdf_url:
                 logger.warning("No PDF URL found")
                 return pd.DataFrame()
@@ -365,11 +530,19 @@ class NSEBondProcessor:
             # Convert to DataFrame
             df = self.to_dataframe(bonds)
             logger.info(f"Successfully processed {len(df)} bonds")
+            
+            # Show sample of processed data
+            if not df.empty:
+                logger.info("Sample processed data:")
+                logger.info(df[['ISIN', 'CouponRate', 'CurrentPrice', 'YTM']].head().to_string())
+            
             return df
             
         except Exception as e:
             logger.error(f"Error in process_latest_bonds: {e}")
             return pd.DataFrame()
+
+# Include all your other classes (MockDatabase, TreasuryPipeline, main) unchanged...
 
 class MockDatabase:
     """Mock database for demonstration purposes"""
@@ -393,6 +566,7 @@ class MockDatabase:
         try:
             with open(self.data_file, 'w') as f:
                 json.dump(self.bonds, f, indent=2, default=str)
+            logger.info(f"Saved {len(self.bonds)} bonds to {self.data_file}")
         except Exception as e:
             logger.error(f"Error saving data: {e}")
     
@@ -528,86 +702,45 @@ class TreasuryPipeline:
             issues.append(f"Invalid yields: {invalid_yields} records")
         
         return issues
-    
-    def get_status(self) -> Dict[str, Any]:
-        """Get pipeline status"""
-        summary = self.database.get_summary()
-        
-        status = {
-            'pipeline_status': 'Ready',
-            'last_run': datetime.now().isoformat(),
-            'data_summary': summary
-        }
-        
-        return status
-    
-    def export_data(self, filepath: str, limit: int = 1000) -> bool:
-        """Export data to file"""
-        try:
-            df = self.database.get_latest_data(limit)
-            
-            if df.empty:
-                logger.warning("No data to export")
-                return False
-            
-            if filepath.endswith('.csv'):
-                df.to_csv(filepath, index=False)
-            elif filepath.endswith('.json'):
-                df.to_json(filepath, orient='records', indent=2)
-            else:
-                logger.error("Unsupported file format. Use .csv or .json")
-                return False
-            
-            logger.info(f"Data exported to {filepath}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Export failed: {e}")
-            return False
 
 async def main():
     """Main function with CLI interface"""
     import argparse
     
-    parser = argparse.ArgumentParser(description='NSE Treasury Securities Pipeline')
+    parser = argparse.ArgumentParser(description='NSE Treasury Securities Pipeline - FIXED VERSION')
     parser.add_argument('--run', action='store_true', help='Run bond collection')
     parser.add_argument('--date', type=str, help='Target date (DD-MMM-YYYY)')
-    parser.add_argument('--status', action='store_true', help='Show pipeline status')
-    parser.add_argument('--export', type=str, help='Export data to file (CSV/JSON)')
     parser.add_argument('--test', action='store_true', help='Run system test')
-    parser.add_argument('--summary', action='store_true', help='Show data summary')
+    parser.add_argument('--search', action='store_true', help='Search for available PDFs')
     
     args = parser.parse_args()
     
-    # Initialize pipeline
-    pipeline = TreasuryPipeline()
+    # Create directories
+    Path('downloads').mkdir(exist_ok=True)
+    Path('logs').mkdir(exist_ok=True)
     
     if args.test:
-        print("Running system test...")
-        
-        # Test imports
-        try:
-            import pdfplumber, aiohttp, pandas
-            print("✓ All required packages available")
-        except ImportError as e:
-            print(f"✗ Missing package: {e}")
-            return
-        
-        # Test directories
-        if Path('downloads').exists():
-            print("✓ Downloads directory exists")
+        print("🧪 Testing system...")
+        if ocr_engine is not None:
+            print("✓ PaddleOCR available")
         else:
-            print("⚠ Downloads directory missing (will be created)")
-        
-        if Path('logs').exists():
-            print("✓ Logs directory exists")
-        else:
-            print("⚠ Logs directory missing (will be created)")
-        
+            print("⚠ PaddleOCR not available")
+        print("✓ Downloads directory ready")
+        print("✓ Logs directory ready")
         print("🎉 System test passed!")
     
+    elif args.search:
+        print("🔍 Searching for available PDFs...")
+        processor = NSEBondProcessor()
+        pdf_url = await processor.find_available_pdf(args.date)
+        if pdf_url:
+            print(f"✓ Found PDF: {pdf_url}")
+        else:
+            print("✗ No PDFs found")
+    
     elif args.run:
-        print("Running treasury bond collection...")
+        print("🚀 Running treasury bond collection...")
+        pipeline = TreasuryPipeline()
         result = await pipeline.run_collection(args.date)
         
         print(f"\nResult: {'✓ Success' if result['success'] else '✗ Failed'}")
@@ -621,50 +754,27 @@ async def main():
         if result.get('database_stats'):
             stats = result['database_stats']
             print(f"Database: {stats['inserted']} inserted, {stats['updated']} updated")
-    
-    elif args.status:
-        status = pipeline.get_status()
-        print("\nPipeline Status:")
-        print(f"Status: {status['pipeline_status']}")
-        print(f"Last run: {status['last_run']}")
         
-        if status['data_summary']:
-            summary = status['data_summary']
-            print(f"\nData Summary:")
-            print(f"Total bonds: {summary.get('total_bonds', 0)}")
-            print(f"Unique ISINs: {summary.get('unique_isins', 0)}")
-            print(f"Latest date: {summary.get('latest_date', 'N/A')}")
-            print(f"Average YTM: {summary.get('avg_ytm', 0):.2f}%")
-    
-    elif args.summary:
-        summary = pipeline.database.get_summary()
-        if summary:
-            print("\nTreasury Data Summary:")
-            print("=" * 30)
-            for key, value in summary.items():
-                if isinstance(value, float):
-                    print(f"{key}: {value:.2f}")
-                else:
-                    print(f"{key}: {value}")
-        else:
-            print("No data available")
-    
-    elif args.export:
-        success = pipeline.export_data(args.export)
-        if success:
-            print(f"✓ Data exported to {args.export}")
-        else:
-            print(f"✗ Export failed")
+        # Show sample data if successful
+        if result['success'] and result['processed_bonds'] > 0:
+            print("\n📊 Sample bond data:")
+            df = pipeline.database.get_latest_data(5)
+            if not df.empty:
+                print(df[['ISIN', 'CouponRate', 'CurrentPrice', 'YTM']].to_string())
+            
+            # Save to CSV for easy viewing
+            output_file = f"bonds_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            pipeline.database.get_latest_data().to_csv(output_file, index=False)
+            print(f"💾 Data saved to: {output_file}")
     
     else:
         parser.print_help()
         print("\nExample usage:")
-        print("  python NSE_Pipeline.py --test          # Test system")
-        print("  python NSE_Pipeline.py --run           # Run collection")
-        print("  python NSE_Pipeline.py --run --date 03-JUL-2025")
-        print("  python NSE_Pipeline.py --status        # Show status")
-        print("  python NSE_Pipeline.py --summary       # Show data summary")
-        print("  python NSE_Pipeline.py --export data.csv  # Export data")
+        print("  python NSE_Pipeline_Fixed.py --test")
+        print("  python NSE_Pipeline_Fixed.py --search")
+        print("  python NSE_Pipeline_Fixed.py --search --date 10-JUL-2025")
+        print("  python NSE_Pipeline_Fixed.py --run")
+        print("  python NSE_Pipeline_Fixed.py --run --date 10-JUL-2025")
 
 if __name__ == "__main__":
     asyncio.run(main())

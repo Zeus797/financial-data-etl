@@ -1,0 +1,21 @@
+{
+  "version": "48.0.0",
+  "files": {
+    "865a2c13564b142adfa089cfa54ccdffc6be888067d654f2df635d7962ec8430": {
+      "displayName": "financial-pipeline-development-database Template",
+      "source": {
+        "path": "financial-pipeline-development-database.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "782859940325-eu-west-1-9dcbef5c": {
+          "bucketName": "cdk-hnb659fds-assets-782859940325-eu-west-1",
+          "objectKey": "865a2c13564b142adfa089cfa54ccdffc6be888067d654f2df635d7962ec8430.json",
+          "region": "eu-west-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::782859940325:role/cdk-hnb659fds-file-publishing-role-782859940325-eu-west-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

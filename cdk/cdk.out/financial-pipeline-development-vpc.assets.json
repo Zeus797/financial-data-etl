@@ -1,0 +1,21 @@
+{
+  "version": "48.0.0",
+  "files": {
+    "5e72fb3105fb12dabf3e42c437642ff6063d7b803eaff0098ef3ae7c5cdec15c": {
+      "displayName": "financial-pipeline-development-vpc Template",
+      "source": {
+        "path": "financial-pipeline-development-vpc.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "782859940325-eu-west-1-44f46a8e": {
+          "bucketName": "cdk-hnb659fds-assets-782859940325-eu-west-1",
+          "objectKey": "5e72fb3105fb12dabf3e42c437642ff6063d7b803eaff0098ef3ae7c5cdec15c.json",
+          "region": "eu-west-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::782859940325:role/cdk-hnb659fds-file-publishing-role-782859940325-eu-west-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

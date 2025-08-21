@@ -20,7 +20,7 @@ from src.models.universal_models import (
     DimCountry, DimDate, FactCarbonOffset, get_date_key, 
     create_date_dimension_record
 )
-
+ 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 

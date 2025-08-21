@@ -1,0 +1,23 @@
+# docker/.dockerignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+.env
+.venv/
+venv/
+.git
+.gitignore
+README.md
+Dockerfile
+.dockerignore
+node_modules
+.pytest_cache
+.coverage
+.mypy_cache
+tests/
+docs/
+*.md
+.DS_Store

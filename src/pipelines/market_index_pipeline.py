@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Market Index Pipeline Orchestrator
+Market Index Pipeline Orchestrator 
 Runs the complete ETL pipeline: Collect → Transform → Load
 
 Features:
@@ -19,7 +19,7 @@ import subprocess
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional 
 import json
 
 # Configure logging
@@ -175,7 +175,7 @@ class MarketIndexPipelineOrchestrator:
                 df = pd.read_csv(combined_file)
                 self.pipeline_stats['total_records_collected'] = len(df)
                 logger.info(f"✅ Using existing data: {len(df):,} records")
-                self.pipeline_stats['steps_completed'].append('collection')
+                self.pipeline_stats['steps_completed'].append('collection') 
                 return True
             except Exception as e:
                 logger.warning(f"⚠️ Existing data file corrupted: {e}")
